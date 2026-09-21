@@ -78,6 +78,8 @@ class WebhookPullRequest(BaseModel):
 
     # PR body / description (optional — can be empty)
     body: str = ""
+    # PR body / description (optional — can be empty or null from GitHub)
+    body: str | None = ""
 
     # Inline diff — non-standard field, present in our demo fixture only.
     # Real GitHub webhooks do NOT include the diff; it must be fetched separately.
@@ -164,6 +166,7 @@ class WebhookEvent(BaseModel):
     def pr_body(self) -> str:
         """PR description body (may be empty)"""
         return self.pull_request.body
+        return self.pull_request.body or ""
 
     @property
     def pr_author(self) -> str:
