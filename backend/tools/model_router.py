@@ -14,25 +14,19 @@
 #   - Override via environment variable: SECURITY_MODEL=gpt-4o (for testing)
 #   - Phase 9 (Evaluation) can swap models per-agent without touching agent code
 #
-# THE ROUTING LOGIC (Phase 5 decision):
+# THE ROUTING LOGIC:
 #
-#   SECURITY agent -> claude-3-5-sonnet-20241022 (Anthropic)
-#     WHY: Security analysis requires deep reasoning about subtle vulnerability patterns.
-#          Claude Sonnet 3.5 has stronger long-context reasoning than gpt-4o-mini.
-#          Cost: ~$0.003/1k input tokens. Worth it — a missed SQL injection is expensive.
+#   PRIMARY MODEL -> mistral-small-latest (Mistral AI)
+#     Fast, highly capable code analysis model across all agents.
 #
-#   QUALITY agent -> gpt-4o-mini (OpenAI)
-#     WHY: Code quality checks (naming, complexity, SOLID violations) are pattern-matching.
-#          gpt-4o-mini is fast and cheap: $0.00015/1k input tokens. ~20x cheaper than Sonnet.
-#          Acceptable quality loss at 10x lower cost for non-security findings.
+#   FALLBACK MODEL -> gemini-2.5-flash (Google GenAI)
+#     Automatically invoked when Mistral returns HTTP 429 (rate limited).
 #
-#   TEST agent -> gpt-4o-mini (OpenAI)
-#     WHY: Same reasoning as QUALITY — "does this diff have test coverage?" is structured.
-#          No deep reasoning needed. gpt-4o-mini is sufficient.
-#
-#   DOCS agent -> gpt-4o-mini (OpenAI)
-#     WHY: Documentation gap detection is syntactic — did you add a public function
-#          without a docstring? Cheapest task of all four agents.
+#   Per-agent roles:
+#     - SECURITY: 8000 token context budget for full changed lines
+#     - QUALITY:  6000 token context budget for function-level context
+#     - TEST:     5000 token context budget for diff and tests
+#     - DOCS:     4000 token context budget for public interfaces and signatures
 #
 # CONTEXT BUDGET DECISIONS:
 #   Why a context budget? LLMs charge by token. A large PR diff can be 50k+ tokens.
@@ -99,44 +93,41 @@ class ModelConfig:
 _ROUTING_TABLE: dict[AgentType, ModelConfig] = {
 
     AgentType.SECURITY: ModelConfig(
-        # Security agent: Claude 3.5 Sonnet preferred for deep security reasoning.
-        # Falls back to gpt-4o if SECURITY_PROVIDER=openai is set in env.
-        provider=os.environ.get("SECURITY_PROVIDER", "anthropic"),
+        # Security agent: mistral-small-latest primary, fallback to gemini-2.5-flash
+        provider=os.environ.get("SECURITY_PROVIDER", "mistral"),
         model_name=os.environ.get(
             "SECURITY_MODEL",
-            "claude-3-5-sonnet-20241022" if os.environ.get("SECURITY_PROVIDER", "anthropic") == "anthropic" else "gpt-4o",
+            "mistral-small-latest",
         ),
         context_budget_tokens=8000,
         max_response_tokens=2048,
     ),
 
     AgentType.QUALITY: ModelConfig(
-        provider="openai",
-        # Default: gpt-4o-mini (fast, cheap, good at pattern matching)
-        # Override: QUALITY_MODEL env var
+        provider=os.environ.get("QUALITY_PROVIDER", "mistral"),
         model_name=os.environ.get(
             "QUALITY_MODEL",
-            "gpt-4o-mini",
+            "mistral-small-latest",
         ),
         context_budget_tokens=6000,  # Needs function-level context
         max_response_tokens=2048,
     ),
 
     AgentType.TEST: ModelConfig(
-        provider="openai",
+        provider=os.environ.get("TEST_PROVIDER", "mistral"),
         model_name=os.environ.get(
             "TEST_MODEL",
-            "gpt-4o-mini",
+            "mistral-small-latest",
         ),
         context_budget_tokens=5000,  # Needs to see what was added
         max_response_tokens=2048,
     ),
 
     AgentType.DOCS: ModelConfig(
-        provider="openai",
+        provider=os.environ.get("DOCS_PROVIDER", "mistral"),
         model_name=os.environ.get(
             "DOCS_MODEL",
-            "gpt-4o-mini",
+            "mistral-small-latest",
         ),
         context_budget_tokens=4000,  # Only needs function signatures
         max_response_tokens=1024,    # Docs findings are shorter

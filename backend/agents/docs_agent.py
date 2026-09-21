@@ -2,10 +2,8 @@
 #
 # DocsAgent — specialist for documentation gaps.
 #
-# MODEL: gpt-4o-mini (OpenAI)
-# WHY: Documentation checking is the simplest of the four tasks.
-#      "Does this public function have a docstring?" is syntactic.
-#      Cheapest task -> cheapest model. $0.00015/1k tokens.
+# MODEL: mistral-small-latest (Mistral AI, fallback: gemini-2.5-flash)
+# WHY: Documentation checking is fast and efficient with mistral-small-latest.
 #
 # WHAT DOCS AGENT LOOKS FOR:
 #   - Public functions/classes/methods with no docstring
@@ -22,7 +20,7 @@ class DocsAgent(BaseAgent):
     """
     Specialist agent for documentation gaps.
 
-    Model:  gpt-4o-mini (from model_router.py)
+    Model:  mistral-small-latest (fallback: gemini-2.5-flash, from model_router.py)
     Focus:  Missing docstrings, type hints, README updates
     """
 

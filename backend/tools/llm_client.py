@@ -46,11 +46,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import anthropic
-import openai
+import httpx
 
 from backend.core.exceptions import AgentError
 logger = logging.getLogger(__name__)
+
+
+class MistralRateLimitError(AgentError):
+    """Raised when Mistral returns a 429 Too Many Requests / Rate Limit error."""
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -91,16 +95,21 @@ async def _persist_call_log(
 
 
 # ---------------------------------------------------------------------------
-# Token cost table (USD per 1000 tokens, as of mid-2025)
-# Used to compute estimated cost per call for observability.
-# Phase 16 (Economics) will move this to a database for runtime updates.
+# Token cost table (USD per 1000 tokens)
 # ---------------------------------------------------------------------------
 _TOKEN_COSTS: dict[str, dict[str, float]] = {
-    # OpenAI models
-    "gpt-4o":            {"input": 0.005,   "output": 0.015},
-    "gpt-4o-mini":       {"input": 0.00015, "output": 0.0006},
-    "gpt-3.5-turbo":     {"input": 0.0005,  "output": 0.0015},
-    # Anthropic models
+    # Mistral models (primary)
+    "mistral-small-latest":  {"input": 0.0001,  "output": 0.0003},
+    "mistral-medium-latest": {"input": 0.0004,  "output": 0.0012},
+    "mistral-large-latest":  {"input": 0.002,   "output": 0.006},
+    # Google GenAI models (fallback)
+    "gemini-2.5-flash":      {"input": 0.00015, "output": 0.0006},
+    "gemini-1.5-flash":      {"input": 0.000075,"output": 0.0003},
+    "gemini-1.5-pro":        {"input": 0.00125, "output": 0.005},
+    # Legacy models (backward compatibility)
+    "gpt-4o":                {"input": 0.005,   "output": 0.015},
+    "gpt-4o-mini":           {"input": 0.00015, "output": 0.0006},
+    "gpt-3.5-turbo":         {"input": 0.0005,  "output": 0.0015},
     "claude-3-5-sonnet-20241022": {"input": 0.003,  "output": 0.015},
     "claude-3-haiku-20240307":    {"input": 0.00025,"output": 0.00125},
 }
@@ -176,109 +185,100 @@ def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
 
 class LLMClient:
     """
-    Async LLM client supporting OpenAI and Anthropic.
+    Async LLM client supporting Mistral (primary) and Google GenAI Gemini (fallback).
 
     LIFECYCLE:
-    This client is stateless — it creates API client objects per call.
-    No shared state between calls (thread-safe, safe to use concurrently).
-    The API keys are read from Settings at call time.
+    This client is stateless — it creates async HTTP client connections per call.
+    Thread-safe and safe to use concurrently across multiple agent tasks.
+    API keys are read from Settings at call time.
 
-    USAGE:
-    From an agent:
-      response = await llm_client.call_openai(
-          model="gpt-4o-mini",
-          messages=[{"role": "user", "content": "..."}],
-          system_prompt="You are a code quality reviewer...",
-      )
-      findings = response.content  # already parsed dict
+    ORCHESTRATION:
+    Primary model: mistral-small-latest via call_mistral().
+    Fallback model: gemini-2.5-flash via call_google() when Mistral returns HTTP 429 RateLimit.
+    Agents call call_with_fallback() which orchestrates this transparently.
     """
 
-    # Maximum number of retries on transient failures (rate limit, 5xx)
+    # Maximum number of retries on transient failures (5xx, network drops)
     MAX_RETRIES = 3
 
     # Base delay for exponential backoff in seconds.
-    # Retry 1: 1s, Retry 2: 2s, Retry 3: 4s
     BASE_RETRY_DELAY = 1.0
 
-    async def call_openai(
+    async def call_mistral(
         self,
-        model: str,
-        messages: list[dict[str, str]],
-        system_prompt: str,
+        model: str = "mistral-small-latest",
+        messages: list[dict[str, str]] | None = None,
+        system_prompt: str = "",
         json_mode: bool = True,
         max_tokens: int = 2048,
         api_key: str | None = None,
     ) -> LLMResponse:
         """
-        Makes one call to the OpenAI API.
-
-        Args:
-            model:         OpenAI model name. e.g. "gpt-4o-mini"
-            messages:      List of {role, content} dicts. role is "user" or "assistant".
-                           Do NOT include the system message here — pass it as system_prompt.
-            system_prompt: The agent's instructions. Sent as {"role": "system", "content": ...}
-                           Kept separate from messages so we can update the prompt
-                           without touching the message history.
-            json_mode:     If True, tells OpenAI to return valid JSON (enforced server-side).
-                           Always True for our structured output calls.
-            max_tokens:    Maximum tokens in the response. Default 2048 is enough for
-                           a list of 10-15 findings with summaries and suggestions.
-            api_key:       OpenAI API key. If None, reads from OPENAI_API_KEY env var.
-
-        Returns:
-            LLMResponse with parsed content, token counts, latency, and cost.
-
-        Raises:
-            AgentError: if the call fails after all retries.
+        Makes an API call to Mistral AI.
+        If rate limited (HTTP 429), raises MistralRateLimitError to trigger Gemini fallback.
         """
         from backend.config import get_settings
         cfg = get_settings()
-        key = api_key or cfg.openai_api_key
+        key = api_key or cfg.mistral_api_key
 
-        client = openai.AsyncOpenAI(api_key=key)
-
-        # Build the full messages list: system first, then user messages
+        messages = messages or []
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
-        # OpenAI JSON mode config
-        # response_format={"type": "json_object"} tells OpenAI:
-        #   "Your response MUST be valid JSON. If it is not, you will be penalized."
-        # This is enforced server-side — OpenAI will repair the JSON if needed.
-        response_format = {"type": "json_object"} if json_mode else {"type": "text"}
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": full_messages,
+            "temperature": 0.1,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        }
 
         last_error: Exception | None = None
         for attempt in range(self.MAX_RETRIES + 1):
             start = time.monotonic()
             try:
-                response = await client.chat.completions.create(
-                    model=model,
-                    messages=full_messages,
-                    response_format=response_format,
-                    max_tokens=max_tokens,
-                    temperature=0.1,  # low temperature = more deterministic, less hallucination
-                )
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(
+                        "https://api.mistral.ai/v1/chat/completions",
+                        json=payload,
+                        headers=headers,
+                    )
+
+                if resp.status_code == 429:
+                    raise MistralRateLimitError(
+                        f"Mistral rate limit (429): {resp.text}"
+                    )
+
+                if resp.status_code and 400 <= resp.status_code < 500:
+                    raise AgentError(
+                        f"Mistral API client error {resp.status_code}: {resp.text}",
+                        agent_name=model,
+                    )
+
+                resp.raise_for_status()
+                data = resp.json()
 
                 latency = time.monotonic() - start
-                raw_content = response.choices[0].message.content or "{}"
-                input_tokens  = response.usage.prompt_tokens
-                output_tokens = response.usage.completion_tokens
+                raw_content = data["choices"][0]["message"]["content"] or "{}"
+                usage = data.get("usage", {})
+                input_tokens = usage.get("prompt_tokens", 0)
+                output_tokens = usage.get("completion_tokens", 0)
 
-                # Parse JSON
                 is_valid_json = True
                 try:
                     parsed = json.loads(raw_content)
                 except json.JSONDecodeError:
-                    logger.warning(
-                        "openai_json_parse_failed | model=%s attempt=%d | "
-                        "trying partial extraction",
-                        model, attempt,
-                    )
                     parsed = _try_extract_json(raw_content)
                     is_valid_json = bool(parsed)
 
                 cost = _compute_cost(model, input_tokens, output_tokens)
                 logger.info(
-                    "openai_call | model=%s input_tokens=%d output_tokens=%d "
+                    "mistral_call | model=%s input_tokens=%d output_tokens=%d "
                     "latency=%.2fs cost=$%.6f",
                     model, input_tokens, output_tokens, latency, cost,
                 )
@@ -302,147 +302,100 @@ class LLMClient:
                     is_valid_json=is_valid_json,
                 )
 
-            except openai.RateLimitError as e:
-                last_error = e
-                delay = self.BASE_RETRY_DELAY * (2 ** attempt)
-                # Check if the API told us how long to wait
-                retry_after = getattr(e, "retry_after", delay)
-                logger.warning(
-                    "openai_rate_limit | model=%s attempt=%d/%d | waiting %.1fs",
-                    model, attempt + 1, self.MAX_RETRIES, retry_after,
-                )
-                if attempt < self.MAX_RETRIES:
-                    await asyncio.sleep(retry_after or delay)
-
-            except openai.APIStatusError as e:
-                last_error = e
-                # 4xx errors (except 429) are not retryable
-                if e.status_code and 400 <= e.status_code < 500 and e.status_code != 429:
-                    logger.error(
-                        "openai_client_error | model=%s status=%d | not retrying",
-                        model, e.status_code,
-                    )
-                    raise AgentError(
-                        f"OpenAI API client error {e.status_code}: {str(e)}",
-                        agent_name=model,
-                    ) from e
-                delay = self.BASE_RETRY_DELAY * (2 ** attempt)
-                logger.warning(
-                    "openai_server_error | model=%s attempt=%d/%d | waiting %.1fs",
-                    model, attempt + 1, self.MAX_RETRIES, delay,
-                )
-                if attempt < self.MAX_RETRIES:
-                    await asyncio.sleep(delay)
+            except MistralRateLimitError:
+                raise
 
             except Exception as e:
                 last_error = e
                 delay = self.BASE_RETRY_DELAY * (2 ** attempt)
                 logger.warning(
-                    "openai_unexpected_error | model=%s attempt=%d/%d error=%s",
+                    "mistral_call_error | model=%s attempt=%d/%d error=%s",
                     model, attempt + 1, self.MAX_RETRIES, str(e),
                 )
                 if attempt < self.MAX_RETRIES:
                     await asyncio.sleep(delay)
 
         raise AgentError(
-            f"OpenAI call failed after {self.MAX_RETRIES + 1} attempts: {last_error}",
+            f"Mistral call failed after {self.MAX_RETRIES + 1} attempts: {last_error}",
             agent_name=model,
         ) from last_error
 
-    async def call_anthropic(
+    async def call_google(
         self,
-        model: str,
-        messages: list[dict[str, str]],
-        system_prompt: str,
+        model: str = "gemini-2.5-flash",
+        messages: list[dict[str, str]] | None = None,
+        system_prompt: str = "",
+        json_mode: bool = True,
         max_tokens: int = 2048,
         api_key: str | None = None,
     ) -> LLMResponse:
         """
-        Makes one call to the Anthropic API.
-
-        Anthropic does not have a native JSON mode like OpenAI.
-        Instead, we:
-          1. Add JSON formatting instructions to the system prompt
-          2. Add a "prefill" technique: start the assistant's response with "{"
-             so the model knows it must complete a JSON object
-          3. Parse the response, falling back to partial extraction on failure
-
-        Args:
-            model:        Anthropic model name. e.g. "claude-3-5-sonnet-20241022"
-            messages:     List of {role, content} dicts.
-            system_prompt: Agent instructions + JSON format requirement.
-            max_tokens:   Maximum tokens in the response.
-            api_key:      Anthropic API key. If None, reads from ANTHROPIC_API_KEY env var.
-
-        Returns:
-            LLMResponse — same shape as call_openai().
-
-        Raises:
-            AgentError: if the call fails after all retries.
+        Makes an API call to Google GenAI (Gemini).
+        Used as primary fallback when Mistral is rate limited.
         """
         from backend.config import get_settings
         cfg = get_settings()
-        key = api_key or cfg.anthropic_api_key
+        key = api_key or cfg.google_api_key
 
-        client = anthropic.AsyncAnthropic(api_key=key)
+        messages = messages or []
+        contents = []
+        for m in messages:
+            role = "user" if m.get("role") in ("user", "system") else "model"
+            contents.append({"role": role, "parts": [{"text": m.get("content", "")}]})
 
-        # Add JSON instruction to system prompt for Anthropic
-        # (OpenAI handles this via response_format, Anthropic via prompt)
-        json_system = (
-            system_prompt
-            + "\n\nCRITICAL: You MUST respond with ONLY valid JSON. "
-            "No preamble, no explanation, no markdown code blocks. "
-            "Start your response with { and end with }."
-        )
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": max_tokens,
+            },
+        }
+        if system_prompt:
+            payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+        if json_mode:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
 
-        # Anthropic "prefill" technique:
-        # Add an assistant turn that starts with "{" — this forces the model
-        # to continue the JSON object rather than starting with prose.
-        # This is the standard technique for reliable JSON from Anthropic models.
-        prefill_messages = list(messages) + [{"role": "assistant", "content": "{"}]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        headers = {"Content-Type": "application/json"}
 
         last_error: Exception | None = None
         for attempt in range(self.MAX_RETRIES + 1):
             start = time.monotonic()
             try:
-                response = await client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    system=json_system,
-                    messages=prefill_messages,
-                    temperature=0.1,
-                )
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(url, json=payload, headers=headers)
+
+                if resp.status_code and 400 <= resp.status_code < 500:
+                    raise AgentError(
+                        f"Google GenAI client error {resp.status_code}: {resp.text}",
+                        agent_name=model,
+                    )
+
+                resp.raise_for_status()
+                data = resp.json()
 
                 latency = time.monotonic() - start
+                raw_content = "{}"
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        raw_content = parts[0].get("text", "{}")
 
-                # Anthropic response: response.content is a list of ContentBlock.
-                # We only care about the text block.
-                raw_content = ""
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        raw_content += block.text
-
-                # Re-attach the prefill "{" that we put in the assistant turn
-                # (Anthropic does NOT include the prefill in the response)
-                full_json = "{" + raw_content
-
-                input_tokens  = response.usage.input_tokens
-                output_tokens = response.usage.output_tokens
+                usage = data.get("usageMetadata", {})
+                input_tokens = usage.get("promptTokenCount", 0)
+                output_tokens = usage.get("candidatesTokenCount", 0)
 
                 is_valid_json = True
                 try:
-                    parsed = json.loads(full_json)
+                    parsed = json.loads(raw_content)
                 except json.JSONDecodeError:
-                    logger.warning(
-                        "anthropic_json_parse_failed | model=%s attempt=%d",
-                        model, attempt,
-                    )
-                    parsed = _try_extract_json(full_json)
+                    parsed = _try_extract_json(raw_content)
                     is_valid_json = bool(parsed)
 
                 cost = _compute_cost(model, input_tokens, output_tokens)
                 logger.info(
-                    "anthropic_call | model=%s input_tokens=%d output_tokens=%d "
+                    "google_gemini_call | model=%s input_tokens=%d output_tokens=%d "
                     "latency=%.2fs cost=$%.6f",
                     model, input_tokens, output_tokens, latency, cost,
                 )
@@ -466,45 +419,77 @@ class LLMClient:
                     is_valid_json=is_valid_json,
                 )
 
-            except anthropic.RateLimitError as e:
-                last_error = e
-                delay = self.BASE_RETRY_DELAY * (2 ** attempt)
-                logger.warning(
-                    "anthropic_rate_limit | model=%s attempt=%d/%d | waiting %.1fs",
-                    model, attempt + 1, self.MAX_RETRIES, delay,
-                )
-                if attempt < self.MAX_RETRIES:
-                    await asyncio.sleep(delay)
-
-            except anthropic.APIStatusError as e:
-                last_error = e
-                if e.status_code and 400 <= e.status_code < 500 and e.status_code != 429:
-                    raise AgentError(
-                        f"Anthropic API client error {e.status_code}: {str(e)}",
-                        agent_name=model,
-                    ) from e
-                delay = self.BASE_RETRY_DELAY * (2 ** attempt)
-                logger.warning(
-                    "anthropic_server_error | model=%s attempt=%d/%d | waiting %.1fs",
-                    model, attempt + 1, self.MAX_RETRIES, delay,
-                )
-                if attempt < self.MAX_RETRIES:
-                    await asyncio.sleep(delay)
-
             except Exception as e:
                 last_error = e
                 delay = self.BASE_RETRY_DELAY * (2 ** attempt)
                 logger.warning(
-                    "anthropic_unexpected | model=%s attempt=%d/%d error=%s",
+                    "google_call_error | model=%s attempt=%d/%d error=%s",
                     model, attempt + 1, self.MAX_RETRIES, str(e),
                 )
                 if attempt < self.MAX_RETRIES:
                     await asyncio.sleep(delay)
 
         raise AgentError(
-            f"Anthropic call failed after {self.MAX_RETRIES + 1} attempts: {last_error}",
+            f"Google Gemini call failed after {self.MAX_RETRIES + 1} attempts: {last_error}",
             agent_name=model,
         ) from last_error
+
+    async def call_with_fallback(
+        self,
+        model: str = "mistral-small-latest",
+        messages: list[dict[str, str]] | None = None,
+        system_prompt: str = "",
+        json_mode: bool = True,
+        max_tokens: int = 2048,
+        mistral_api_key: str | None = None,
+        google_api_key: str | None = None,
+        fallback_model: str = "gemini-2.5-flash",
+    ) -> LLMResponse:
+        """
+        Primary LLM caller:
+        Tries Mistral (mistral-small-latest) as primary.
+        If Mistral returns a rate limit (HTTP 429), automatically retries with
+        Google Gen AI (gemini-2.5-flash).
+        """
+        messages = messages or []
+        try:
+            return await self.call_mistral(
+                model=model,
+                messages=messages,
+                system_prompt=system_prompt,
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+                api_key=mistral_api_key,
+            )
+        except MistralRateLimitError as rle:
+            logger.warning(
+                "mistral_rate_limited | primary=%s | falling back to Google Gemini fallback=%s | reason=%s",
+                model, fallback_model, str(rle),
+            )
+            return await self.call_google(
+                model=fallback_model,
+                messages=messages,
+                system_prompt=system_prompt,
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+                api_key=google_api_key,
+            )
+
+    async def call_openai(self, *args: Any, **kwargs: Any) -> LLMResponse:
+        """Legacy compatibility alias routed through call_with_fallback."""
+        model = kwargs.get("model", "mistral-small-latest")
+        if "gpt" in model or "openai" in model:
+            model = "mistral-small-latest"
+        kwargs["model"] = model
+        return await self.call_with_fallback(**kwargs)
+
+    async def call_anthropic(self, *args: Any, **kwargs: Any) -> LLMResponse:
+        """Legacy compatibility alias routed through call_with_fallback."""
+        model = kwargs.get("model", "mistral-small-latest")
+        if "claude" in model or "anthropic" in model:
+            model = "mistral-small-latest"
+        kwargs["model"] = model
+        return await self.call_with_fallback(**kwargs)
 
 
 def _try_extract_json(text: str) -> dict | list:

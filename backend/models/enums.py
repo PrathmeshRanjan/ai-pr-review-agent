@@ -141,13 +141,13 @@ class AgentType(str, Enum):
     Identifies which specialist sub-agent produced a finding or result.
 
     SECURITY:  Looks for OWASP Top 10 vulnerabilities, injection flaws, secrets.
-               Uses claude-3-5-sonnet (strong reasoning).
+               Uses mistral-small-latest (fallback: gemini-2.5-flash).
     QUALITY:   Looks for SOLID violations, complexity, anti-patterns.
-               Uses gpt-4o-mini (fast, cheap).
+               Uses mistral-small-latest (fallback: gemini-2.5-flash).
     TEST:      Looks for test coverage gaps, assertion-free tests.
-               Uses gpt-4o-mini.
+               Uses mistral-small-latest (fallback: gemini-2.5-flash).
     DOCS:      Looks for missing docstrings, type hints, README gaps.
-               Uses gpt-4o-mini (cheapest task).
+               Uses mistral-small-latest (fallback: gemini-2.5-flash).
     """
     SECURITY = "security"
     QUALITY  = "quality"

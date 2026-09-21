@@ -548,7 +548,16 @@ class BaseAgent(ABC):
         """
         messages = [{"role": "user", "content": user_message}]
 
-        if config.provider == "openai":
+        # Primary routing: Mistral (mistral-small-latest) with automatic Gemini fallback on rate limit
+        if config.provider in ("mistral", "google"):
+            return await self._client.call_with_fallback(
+                model=config.model_name,
+                messages=messages,
+                system_prompt=system,
+                json_mode=True,
+                max_tokens=config.max_response_tokens,
+            )
+        elif config.provider == "openai":
             return await self._client.call_openai(
                 model=config.model_name,
                 messages=messages,

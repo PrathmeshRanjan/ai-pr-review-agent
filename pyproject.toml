@@ -39,10 +39,14 @@ dependencies = [
     # LangChain core - base classes used by LangGraph
     "langchain-core>=0.2.0",
 
-    # OpenAI SDK - one of our model providers
-    "openai>=1.30.0",
+    # Mistral AI SDK - primary model provider (mistral-small-latest)
+    "mistralai>=1.0.0",
 
-    # Anthropic SDK - second model provider (for security analysis)
+    # Google Gen AI SDK - fallback model provider (gemini-2.5-flash) and embeddings (gemini-embedding-001)
+    "google-genai>=1.0.0",
+
+    # Legacy SDKs (optional)
+    "openai>=1.30.0",
     "anthropic>=0.28.0",
 
     # Qdrant client - vector store for RAG

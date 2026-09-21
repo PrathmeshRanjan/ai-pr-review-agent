@@ -2,9 +2,9 @@
 #
 # TestAgent — specialist for test coverage gaps.
 #
-# MODEL: gpt-4o-mini (OpenAI)
-# WHY: "Is there a test for this new function?" is a yes/no pattern match.
-#      No deep reasoning needed. gpt-4o-mini is sufficient and 20x cheaper.
+# MODEL: mistral-small-latest (Mistral AI, fallback: gemini-2.5-flash)
+# WHY: "Is there a test for this new function?" is a structured evaluation.
+#      mistral-small-latest provides fast, accurate coverage gap detection.
 #
 # WHAT TEST AGENT LOOKS FOR:
 #   - New public functions/classes with no corresponding test
@@ -21,7 +21,7 @@ class TestAgent(BaseAgent):
     """
     Specialist agent for test coverage gaps.
 
-    Model:  gpt-4o-mini (from model_router.py)
+    Model:  mistral-small-latest (fallback: gemini-2.5-flash, from model_router.py)
     Focus:  Missing tests, untested edge cases, assertion-free tests
     """
 

@@ -114,9 +114,9 @@ print(f"  Case E (empty findings): conf=0.7 (conservative)  OK")
 print("\n[7] Model router")
 sec_cfg  = get_model_config(AgentType.SECURITY)
 qual_cfg = get_model_config(AgentType.QUALITY)
-assert sec_cfg.provider == "anthropic" and "claude" in sec_cfg.model_name
+assert sec_cfg.provider == "mistral" and "mistral" in sec_cfg.model_name
 assert sec_cfg.context_budget_tokens == 8000
-assert qual_cfg.provider == "openai" and "gpt-4o-mini" in qual_cfg.model_name
+assert qual_cfg.provider == "mistral" and "mistral" in qual_cfg.model_name
 print(f"  SECURITY: {sec_cfg.provider}/{sec_cfg.model_name} budget={sec_cfg.context_budget_tokens}  OK")
 print(f"  QUALITY:  {qual_cfg.provider}/{qual_cfg.model_name}  OK")
 
@@ -139,10 +139,11 @@ mock_response = LLMResponse(
                            "summary":"Hardcoded API key","file_path":"src/config.py",
                            "line_start":15,"confidence":0.97}]},
     input_tokens=800, output_tokens=120,
-    model_used="claude-3-5-sonnet-20241022",
+    model_used="mistral-small-latest",
     latency_seconds=2.3, estimated_cost_usd=0.00312, is_valid_json=True,
 )
 mock_client = MagicMock()
+mock_client.call_with_fallback = AsyncMock(return_value=mock_response)
 mock_client.call_anthropic = AsyncMock(return_value=mock_response)
 mock_client.call_openai    = AsyncMock(return_value=mock_response)
 

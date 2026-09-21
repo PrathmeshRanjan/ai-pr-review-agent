@@ -24,17 +24,19 @@ from typing import Literal
 TaskComplexity = Literal["simple", "medium", "complex"]
 
 _RECOMMENDATIONS: dict[str, str] = {
-    "simple":  "gpt-4o-mini",
-    "medium":  "claude-3-haiku-20240307",
-    "complex": "claude-3-5-sonnet-20241022",
+    "simple":  "mistral-small-latest",
+    "medium":  "mistral-small-latest",
+    "complex": "gemini-2.5-flash",
 }
 
-# Mirror of llm_client._TOKEN_COSTS — kept here intentionally so this module
-# does not have to import from tools/ (avoid layering inversion).
+# Mirror of llm_client._TOKEN_COSTS
 _PRICES: dict[str, dict[str, float]] = {
-    "gpt-4o":                    {"input": 0.005,   "output": 0.015},
-    "gpt-4o-mini":               {"input": 0.00015, "output": 0.0006},
-    "gpt-3.5-turbo":             {"input": 0.0005,  "output": 0.0015},
+    "mistral-small-latest":  {"input": 0.0001,  "output": 0.0003},
+    "gemini-2.5-flash":      {"input": 0.00015, "output": 0.0006},
+    # Legacy models
+    "gpt-4o":                {"input": 0.005,   "output": 0.015},
+    "gpt-4o-mini":           {"input": 0.00015, "output": 0.0006},
+    "gpt-3.5-turbo":         {"input": 0.0005,  "output": 0.0015},
     "claude-3-5-sonnet-20241022":{"input": 0.003,   "output": 0.015},
     "claude-3-haiku-20240307":   {"input": 0.00025, "output": 0.00125},
 }
@@ -42,7 +44,7 @@ _PRICES: dict[str, dict[str, float]] = {
 
 def recommend_model(complexity: TaskComplexity) -> str:
     """Recommend a cheap-tier model for a task complexity level."""
-    return _RECOMMENDATIONS.get(complexity, "gpt-4o-mini")
+    return _RECOMMENDATIONS.get(complexity, "mistral-small-latest")
 
 
 def _cost(model: str, in_tok: int, out_tok: int) -> float:

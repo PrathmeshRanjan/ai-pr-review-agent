@@ -7,10 +7,8 @@
 # _system_prompt(). Everything else (truncation, LLM call, output guardrail,
 # retry logic, token counting) is handled by BaseAgent.
 #
-# MODEL: claude-3-5-sonnet-20241022 (Anthropic)
+# MODEL: mistral-small-latest (Mistral AI, fallback: gemini-2.5-flash)
 # WHY: Security analysis requires deep reasoning about subtle attack patterns.
-#      SQL injection in a parameterized query LOOKALIKE requires real reasoning.
-#      Claude 3.5 Sonnet has stronger security reasoning than gpt-4o-mini.
 #      See model_router.py for the full rationale.
 #
 # WHAT SECURITY AGENT LOOKS FOR:
@@ -42,7 +40,7 @@ class SecurityAgent(BaseAgent):
     """
     Specialist agent for security vulnerability detection.
 
-    Model:   claude-3-5-sonnet-20241022 (from model_router.py)
+    Model:   mistral-small-latest (fallback: gemini-2.5-flash, from model_router.py)
     Focus:   OWASP Top 10, secrets, injection flaws, auth bypass
     Output:  List of AgentFinding with severity CRITICAL/HIGH for real vulns
 

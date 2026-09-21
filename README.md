@@ -90,7 +90,8 @@ CREATE INDEX code_chunks_emb_idx ON code_chunks
 | Orchestration | LangGraph (parallel fan-out, checkpointing) |
 | Job Queue | Redis + ARQ |
 | Memory | Tiger Cloud (pgvectorscale DiskANN + hypertables) |
-| LLM | OpenAI GPT-4o (routing per agent) |
+| LLM | Mistral (mistral-small-latest) + Google Gemini (gemini-2.5-flash fallback) |
+| Embeddings | Google Gemini (gemini-embedding-001) |
 | Sandbox | Docker (isolated code execution) |
 | Frontend | Next.js (review dashboard, HITL queue, trace viewer) |
 | Observability | OpenTelemetry + Tiger hypertables |

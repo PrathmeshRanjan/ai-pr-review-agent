@@ -2,10 +2,9 @@
 #
 # QualityAgent — specialist for code quality, SOLID violations, complexity.
 #
-# MODEL: gpt-4o-mini (OpenAI)
-# WHY: Code quality checks are pattern-matching tasks. The model doesn't
-#      need deep reasoning — it needs to recognize anti-patterns.
-#      gpt-4o-mini is 20x cheaper than Claude Sonnet and sufficient here.
+# MODEL: mistral-small-latest (Mistral AI, fallback: gemini-2.5-flash)
+# WHY: Code quality checks are pattern-matching tasks. mistral-small-latest
+#      is fast, cost-effective, and highly accurate for maintainability checks.
 #
 # WHAT QUALITY AGENT LOOKS FOR:
 #   - Functions/methods that are too long (> 50 lines)
@@ -30,7 +29,7 @@ class QualityAgent(BaseAgent):
     """
     Specialist agent for code quality issues.
 
-    Model:  gpt-4o-mini (from model_router.py)
+    Model:  mistral-small-latest (fallback: gemini-2.5-flash, from model_router.py)
     Focus:  SOLID violations, complexity, anti-patterns, maintainability
     """
 

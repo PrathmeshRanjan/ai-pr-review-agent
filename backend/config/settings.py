@@ -130,27 +130,35 @@ class Settings(BaseSettings):
     tiger_pool_min: int = Field(default=2, description="Min connections in Tiger pool.")
     tiger_pool_max: int = Field(default=10, description="Max connections in Tiger pool.")
 
-    # OpenAI embedding model.
-    # text-embedding-3-large with 256 dims: 6x less storage vs 1536-dim small,
-    # same recall curve on code with DiskANN. Matches code_chunks VECTOR(256).
-    # (ADR-003: "256-dim large outperforms 1536-dim small at 1/6th the storage.")
-    openai_embedding_model: str = "text-embedding-3-large"
+    # Google embedding model.
+    # gemini-embedding-001 with 768 dimensions.
+    google_embedding_model: str = "gemini-embedding-001"
 
-    # Number of embedding dimensions. Must match VECTOR(N) in code_chunks table.
-    # 256 for text-embedding-3-large truncated. Change only with a full re-index.
-    openai_embedding_dimensions: int = 256
+    # Number of embedding dimensions. Must match VECTOR(N) in database.
+    # 768 for gemini-embedding-001.
+    google_embedding_dimensions: int = 768
+
+    # Deprecated compatibility alias
+    openai_embedding_model: str = "gemini-embedding-001"
+    openai_embedding_dimensions: int = 768
 
     # -------------------------------------------------------------------------
-    # LLM Providers
+    # LLM Providers (Mistral primary, Google GenAI fallback)
     # -------------------------------------------------------------------------
 
-    # OpenAI API key — used for quality, test, docs agents (cheaper models)
-    # REQUIRED
-    openai_api_key: str
+    # Mistral API key — primary model (mistral-small-latest) for all agents
+    mistral_api_key: str = Field(default="", description="Mistral API key for mistral-small-latest")
 
-    # Anthropic API key — used for security agent (stronger reasoning)
-    # REQUIRED
-    anthropic_api_key: str
+    # Google GenAI API key — fallback model (gemini-2.5-flash) and embeddings (gemini-embedding-001)
+    google_api_key: str = Field(default="", description="Google API key for Gemini models")
+
+    # Primary and fallback model identifiers
+    primary_llm_model: str = "mistral-small-latest"
+    fallback_llm_model: str = "gemini-2.5-flash"
+
+    # Legacy/compatibility keys (optional)
+    openai_api_key: str = Field(default="", description="Optional legacy key")
+    anthropic_api_key: str = Field(default="", description="Optional legacy key")
 
     # -------------------------------------------------------------------------
     # Application Settings
