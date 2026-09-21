@@ -22,7 +22,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -123,7 +123,11 @@ class Settings(BaseSettings):
     mistral_api_key: str = Field(default="", description="Mistral API key for mistral-small-latest")
 
     # Google GenAI API key — fallback model (gemini-2.5-flash) and embeddings (gemini-embedding-001)
-    google_api_key: str = Field(default="", description="Google API key for Gemini models")
+    google_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("google_api_key", "gemini_api_key"),
+        description="Google API key for Gemini models",
+    )
 
     # Primary and fallback model identifiers
     primary_llm_model: str = "mistral-small-latest"

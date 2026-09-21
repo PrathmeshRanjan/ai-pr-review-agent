@@ -464,6 +464,21 @@ class LLMClient:
         Google Gen AI (gemini-2.5-flash).
         """
         messages = messages or []
+        from backend.config import get_settings
+        cfg = get_settings()
+        m_key = mistral_api_key or cfg.mistral_api_key
+        g_key = google_api_key or cfg.google_api_key
+
+        if not m_key and g_key:
+            return await self.call_google(
+                model=fallback_model,
+                messages=messages,
+                system_prompt=system_prompt,
+                json_mode=json_mode,
+                max_tokens=max_tokens,
+                api_key=g_key,
+            )
+
         try:
             return await self.call_mistral(
                 model=model,
