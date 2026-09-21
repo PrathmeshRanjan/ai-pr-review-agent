@@ -368,9 +368,25 @@ async def init_tiger_schema() -> None:
     # asyncpg wants plain postgresql:// not postgresql+asyncpg:// (that's SQLAlchemy syntax)
     dsn = dsn.replace("postgresql+asyncpg://", "postgresql://").replace("postgres+asyncpg://", "postgresql://")
 
-    # Build the pool with pgvector codec registered on every new connection.
+    # Step 1: Pre-flight check on a single connection to install 'vector' extension
+    # before connection pool tries to register the pgvector codec.
+    try:
+        raw_conn = await _asyncpg.connect(dsn)
+        try:
+            await raw_conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+        except Exception as exc:
+            logger.warning("Pre-flight vector extension check: %s", exc)
+        finally:
+            await raw_conn.close()
+    except Exception as exc:
+        logger.warning("Pre-flight connection failed: %s", exc)
+
+    # Step 2: Build the pool with safe pgvector codec registration
     async def _init_conn(conn):
-        await _register_vector(conn)
+        try:
+            await _register_vector(conn)
+        except Exception as exc:
+            logger.debug("register_vector on conn skipped: %s", exc)
 
     _tiger_pool = await _asyncpg.create_pool(
         dsn=dsn,
@@ -405,10 +421,8 @@ async def init_tiger_schema() -> None:
     # Wire the singleton into tiger_client module so get_tiger_memory() works.
     try:
         from backend.memory import tiger_client as _tc
-        if _tc.tiger_memory is None:
-            from backend.memory.tiger_client import TigerMemoryClient
-            _tc.tiger_memory = TigerMemoryClient(_tiger_pool)
-            logger.info("TigerMemoryClient singleton initialized.")
+        _tc.tiger_memory = TigerMemoryClient(_tiger_pool)
+        logger.info("TigerMemoryClient singleton initialized.")
     except Exception as exc:  # noqa: BLE001
         logger.warning("TigerMemoryClient init warning: %s", exc)
 

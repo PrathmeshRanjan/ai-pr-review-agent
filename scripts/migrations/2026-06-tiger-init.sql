@@ -13,18 +13,29 @@
 
 -- ---------------------------------------------------------------------------
 -- STEP 0: Extensions
--- CASCADE installs pgvector as a dependency of vectorscale automatically.
 -- ---------------------------------------------------------------------------
-CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;   -- also installs pgvector
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Optional extensions on Tiger Cloud / TimescaleDB instances
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- STEP 1: Semantic Memory — code_chunks (replaces Qdrant)
 --
 -- Stores chunked code files, ADRs, and prior reviews.
--- The DiskANN index powers ANN search — replaces Qdrant's HNSW collection.
--- 256-dim text-embedding-3-large truncated outperforms 1536-dim small
--- at 6x less storage with the same recall curve on code.
+-- The index powers ANN search.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS code_chunks (
     id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -38,10 +49,19 @@ CREATE TABLE IF NOT EXISTS code_chunks (
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- StreamingDiskANN index (pgvectorscale) — cosine similarity
--- Replaces Qdrant's HNSW. 28x lower p95 latency at 50M vectors.
-CREATE INDEX IF NOT EXISTS code_chunks_emb_idx
-    ON code_chunks USING diskann (embedding vector_cosine_ops);
+-- StreamingDiskANN index (Tiger Cloud pgvectorscale) with fallback to HNSW (standard pgvector)
+DO $$
+BEGIN
+    CREATE INDEX IF NOT EXISTS code_chunks_emb_idx
+        ON code_chunks USING diskann (embedding vector_cosine_ops);
+EXCEPTION WHEN OTHERS THEN
+    BEGIN
+        CREATE INDEX IF NOT EXISTS code_chunks_emb_idx
+            ON code_chunks USING hnsw (embedding vector_cosine_ops);
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
+END $$;
 
 -- Lookup index for freshness queries
 CREATE INDEX IF NOT EXISTS code_chunks_repo_path_idx
