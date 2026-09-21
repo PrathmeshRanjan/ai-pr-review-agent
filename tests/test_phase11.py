@@ -31,6 +31,7 @@ import pytest
 from backend.security.masking import (
     MaskingPolicy,
     MaskingContext,
+    mask_sensitive,
     unmask_text,
 )
 from backend.security.injection_guard import (
@@ -122,6 +123,14 @@ class TestMasking:
         # After unmask, original values should be back
         assert "bob@example.org" in recovered
         assert "192.168.1.100" in recovered
+
+    def test_mask_sensitive_wrapper(self):
+        """mask_sensitive returns masked text directly without returning placeholder map."""
+        text = 'api_key = "sk-live-1234567890abcdef1234567890" and email="admin@corp.io"'
+        masked = mask_sensitive(text)
+        assert "sk-live-1234567890abcdef1234567890" not in masked
+        assert "admin@corp.io" not in masked
+        assert "<" in masked and ">" in masked
 
 
 # ===========================================================================
@@ -414,4 +423,40 @@ class TestIntegration:
         }
         with pytest.raises(SecurityThreatBlockedError):
             await build_context(state)
+
+    @pytest.mark.anyio
+    async def test_llm_client_boundary_masking(self):
+        """LLMClient must redact sensitive values from prompt messages and system prompts before sending requests."""
+        from unittest.mock import patch, MagicMock
+        from backend.tools.llm_client import llm_client
+
+        captured_requests = []
+
+        async def fake_post(self, url, *args, **kwargs):
+            captured_requests.append({"url": url, "json": kwargs.get("json", {})})
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.raise_for_status = MagicMock()
+            mock_resp.text = '{"choices": [{"message": {"content": "{\\"status\\": \\"ok\\"}"}}]}'
+            mock_resp.json = MagicMock(return_value={
+                "choices": [{"message": {"content": '{"status": "ok"}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            })
+            return mock_resp
+
+        with patch("httpx.AsyncClient.post", new=fake_post):
+            await llm_client.call_mistral(
+                messages=[{"role": "user", "content": 'secret key: api_key="sk-live-1234567890abcdef1234567890"'}],
+                system_prompt="Review code for user john.doe@company.org",
+            )
+
+        assert len(captured_requests) == 1
+        payload = captured_requests[0]["json"]
+        sent_messages = payload["messages"]
+        all_sent_text = " ".join(m["content"] for m in sent_messages)
+
+        assert "sk-live-1234567890abcdef1234567890" not in all_sent_text
+        assert "john.doe@company.org" not in all_sent_text
+        assert "<" in all_sent_text and ">" in all_sent_text
+
 

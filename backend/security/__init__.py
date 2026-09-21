@@ -22,6 +22,7 @@ from backend.security.masking import (
     MaskingContext,
     MaskingPolicy,
     SensitiveKind,
+    mask_sensitive,
     redact_text,
     unmask_text,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "MaskingContext",
     "MaskingPolicy",
     "SensitiveKind",
+    "mask_sensitive",
     "redact_text",
     "unmask_text",
     # Injection Guard

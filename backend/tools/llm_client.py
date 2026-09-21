@@ -49,6 +49,7 @@ from typing import Any
 import httpx
 
 from backend.core.exceptions import AgentError
+from backend.security.masking import mask_sensitive
 logger = logging.getLogger(__name__)
 
 
@@ -222,7 +223,12 @@ class LLMClient:
         key = api_key or cfg.mistral_api_key
 
         messages = messages or []
-        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        masked_system = mask_sensitive(system_prompt) if system_prompt else ""
+        masked_messages = [
+            {**m, "content": mask_sensitive(m.get("content", ""))}
+            for m in messages
+        ]
+        full_messages = [{"role": "system", "content": masked_system}] + masked_messages
 
         payload: dict[str, Any] = {
             "model": model,
@@ -338,10 +344,12 @@ class LLMClient:
         key = api_key or cfg.google_api_key
 
         messages = messages or []
+        masked_system = mask_sensitive(system_prompt) if system_prompt else ""
         contents = []
         for m in messages:
             role = "user" if m.get("role") in ("user", "system") else "model"
-            contents.append({"role": role, "parts": [{"text": m.get("content", "")}]})
+            content_text = mask_sensitive(m.get("content", ""))
+            contents.append({"role": role, "parts": [{"text": content_text}]})
 
         payload: dict[str, Any] = {
             "contents": contents,
@@ -351,8 +359,8 @@ class LLMClient:
                 "thinkingConfig": {"thinkingBudget": 0},
             },
         }
-        if system_prompt:
-            payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+        if masked_system:
+            payload["systemInstruction"] = {"parts": [{"text": masked_system}]}
         if json_mode:
             payload["generationConfig"]["responseMimeType"] = "application/json"
 

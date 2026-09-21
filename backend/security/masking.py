@@ -383,6 +383,16 @@ def redact_text(
     return ctx.redact(text)
 
 
+def mask_sensitive(text: str, *, policy: MaskingPolicy | None = None) -> str:
+    """
+    Stateless convenience wrapper: redact all sensitive tokens, secrets, and PII
+    from a string and return only the masked text. Safe for preparing prompts
+    and messages before LLM API calls.
+    """
+    masked, _ = redact_text(text, policy=policy)
+    return masked
+
+
 def unmask_text(text: str, placeholder_map: dict[str, str]) -> str:
     """
     Stateless convenience wrapper: unmask using a provided placeholder_map.
