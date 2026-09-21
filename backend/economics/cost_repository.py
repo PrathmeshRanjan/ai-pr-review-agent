@@ -271,7 +271,7 @@ async def get_daily_timeseries(days: int = 30) -> list[DailyPoint]:
 
 
 # ---------------------------------------------------------------------------
-# Tiger Cloud continuous-aggregate read methods
+# Continuous-aggregate read methods
 # ---------------------------------------------------------------------------
 
 async def get_agent_health(
@@ -280,7 +280,7 @@ async def get_agent_health(
 ) -> list[dict]:
     """
     Read per-agent health from the agent_health_1m continuous aggregate.
-    Sub-millisecond at any scale — pre-materialized by TimescaleDB.
+    Sub-millisecond at any scale.
     """
     sql = """
         SELECT
@@ -330,7 +330,7 @@ async def get_pr_cost(
     return dict(row) if row else None
 
 
-async def get_daily_cost_from_tiger(
+async def get_daily_cost_from_aggregates(
     pool: "asyncpg.Pool",
 ) -> float:
     """

@@ -154,21 +154,21 @@ async def workflow_cost(
 
 
 # =============================================================================
-# Tiger Cloud aggregate endpoints
+# Continuous aggregate endpoints
 # These read from pre-materialized continuous aggregates — sub-millisecond
 # at any scale. No GROUP BY scan over raw rows.
 # =============================================================================
 
-@economics_router.get("/agent-health", summary="Per-agent health from Tiger aggregate")
+@economics_router.get("/agent-health", summary="Per-agent health from aggregate")
 async def get_agent_health(
     minutes: int = Query(default=60, ge=1, le=1440, description="Lookback window in minutes"),
 ) -> list[dict]:
     """
     Returns per-agent cost, p95 latency, and rejection rate over the last N minutes.
-    Source: agent_health_1m continuous aggregate (TimescaleDB, refreshed every minute).
+    Source: agent_health_1m continuous aggregate (refreshed every minute).
     """
-    from backend.database.postgres import get_tiger_pool
-    pool = get_tiger_pool()
+    from backend.database.postgres import get_vector_pool
+    pool = get_vector_pool()
     if pool is None:
         return []
     sql = """
@@ -192,15 +192,15 @@ async def get_agent_health(
     return [dict(r) for r in rows]
 
 
-@economics_router.get("/pr-cost/{review_id}", summary="Per-PR cost from Tiger aggregate")
+@economics_router.get("/pr-cost/{review_id}", summary="Per-PR cost from aggregate")
 async def get_pr_cost(review_id: str) -> dict:
     """
     Returns total cost, tokens, agents used, and wall time for a specific PR review.
-    Source: pr_cost_hourly continuous aggregate (TimescaleDB, refreshed every hour).
+    Source: pr_cost_hourly continuous aggregate (refreshed every hour).
     """
-    from backend.database.postgres import get_tiger_pool
+    from backend.database.postgres import get_vector_pool
     import uuid
-    pool = get_tiger_pool()
+    pool = get_vector_pool()
     if pool is None:
         return {"review_id": review_id, "total_cost_usd": 0.0, "total_tokens": 0}
     sql = """
@@ -225,17 +225,17 @@ async def get_pr_cost(review_id: str) -> dict:
     return dict(row)
 
 
-@economics_router.get("/daily-summary", summary="24h cost + latency summary from Tiger aggregates")
+@economics_router.get("/daily-summary", summary="24h cost + latency summary from aggregates")
 async def get_daily_summary() -> dict:
     """
     Returns a 24-hour rollup: total cost, total tokens, p95 latency per agent,
     and rejection rate per agent.
     Source: agent_health_1m continuous aggregate.
     """
-    from backend.database.postgres import get_tiger_pool
-    pool = get_tiger_pool()
+    from backend.database.postgres import get_vector_pool
+    pool = get_vector_pool()
     if pool is None:
-        return {"error": "tiger pool not initialized"}
+        return {"error": "vector pool not initialized"}
     sql = """
         SELECT
             agent,

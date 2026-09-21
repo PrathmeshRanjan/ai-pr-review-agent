@@ -100,35 +100,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/pr_review_agent"
 
     # -------------------------------------------------------------------------
-    # Tiger Cloud (TimescaleDB) — Semantic Memory + Events Spine
-    #
-    # Tiger Cloud is the single data store for:
-    #   1. code_chunks — pgvectorscale DiskANN (replaces Qdrant)
-    #   2. agent_events — hypertable (audit trail, trace viewer, cost ledger)
-    #   3. agent_health_1m / pr_cost_hourly — continuous aggregates (dashboards)
-    #
-    # Tiger Cloud connection string format:
-    #   postgres://tsdbadmin:<password>@<service>.tigerdata.cloud:5432/tsdb?sslmode=require
-    #
-    # For local development, use timescaledb-ha Docker (see docker-compose.yml):
-    #   postgresql+asyncpg://postgres:postgres@localhost:5432/pr_review_agent
-    #
-    # Set TIGER_DATABASE_URL separately from DATABASE_URL so Tiger Cloud billing
-    # and audit trail are isolated from the main app Postgres connection pool.
-    # If TIGER_DATABASE_URL is empty, falls back to DATABASE_URL (dev only).
+    # Vector Memory & Embeddings (pgvector)
     # -------------------------------------------------------------------------
-    tiger_database_url: str = Field(
-        default="",
-        description=(
-            "Tiger Cloud connection URL. "
-            "Format: postgres://tsdbadmin:<password>@<host>:5432/tsdb?sslmode=require. "
-            "Falls back to DATABASE_URL when empty (local dev with timescaledb-ha Docker)."
-        ),
-    )
-
-    # Tiger Cloud asyncpg pool settings (separate from the main app pool)
-    tiger_pool_min: int = Field(default=2, description="Min connections in Tiger pool.")
-    tiger_pool_max: int = Field(default=10, description="Max connections in Tiger pool.")
 
     # Google embedding model.
     # gemini-embedding-001 with 768 dimensions.

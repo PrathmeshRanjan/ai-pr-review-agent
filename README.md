@@ -13,27 +13,26 @@ Every phase has a gate: tests pass, evals pass, a written checkpoint before the 
 - Each agent reasons about its domain using the PR diff + codebase context (RAG via pgvectorscale)
 - Posts structured review comments back to the GitHub PR
 - Routes low-confidence findings to a human approval queue (HITL)
-- Every agent action, LLM call, and decision is recorded in a Tiger Cloud hypertable
-- Real-time cost and latency dashboards powered by Tiger continuous aggregates
+- Every agent action, LLM call, and decision is recorded in an events table
+- Real-time cost and latency dashboards powered by continuous aggregates
 - Learns from merged vs rejected reviews over time
 
 ---
 
-## Data Layer — Tiger Cloud (TimescaleDB)
+## Data Layer — PostgreSQL (pgvector)
 
-Most AI projects end up juggling three separate stores: a vector DB for RAG, a time-series store for traces, and Postgres for structured data. This project uses [Tiger Cloud](https://tigerdata.com) — a managed TimescaleDB instance — to collapse all three into one Postgres database.
+Most AI projects end up juggling three separate stores: a vector DB for RAG, a time-series store for traces, and Postgres for structured data. This project uses PostgreSQL with the `pgvector` extension to collapse all three into one database.
 
 One connection pool. One backup policy. One place to reason about the data.
 
 ### Three roles, one database
 
-| Layer | Tiger Feature | What it does |
+| Layer | Feature | What it does |
 |---|---|---|
-| Semantic memory | pgvectorscale DiskANN | Stores chunked code, ADRs, and prior reviews. 4 specialist agents query it for context on every PR. Replaces Qdrant entirely. |
-| Agent events | Hypertables | Every span, LLM call, tool call, and decision lands in one time-ordered table: `agent_events`. Powers the trace viewer, audit trail, and cost ledger. |
-| Live dashboards | Continuous aggregates | Real-time rollups for cost per PR, p95 latency per agent, rejection rate. Materialized so the dashboard stays fast as history grows from GBs to TBs. |
-| Cost control | Hypertables + aggregates | Token cost attribution per agent span. Budget caps read from the same aggregate the dashboard does. |
-| Coding agent | Tiger MCP | The coding agent driving the build is wired to Tiger via MCP. It introspects schemas, runs queries, and verifies migrations live. |
+| Semantic memory | pgvector (DiskANN / HNSW) | Stores chunked code, ADRs, and prior reviews. 4 specialist agents query it for context on every PR. Replaces external vector databases entirely. |
+| Agent events | Time-series events | Every span, LLM call, tool call, and decision lands in one time-ordered table: `agent_events`. Powers the trace viewer, audit trail, and cost ledger. |
+| Live dashboards | Continuous aggregates | Real-time rollups for cost per PR, p95 latency per agent, rejection rate. Materialized so the dashboard stays fast as history grows. |
+| Cost control | Events + aggregates | Token cost attribution per agent span. Budget caps read from the same aggregate the dashboard does. |
 
 ### Schema sketch
 
@@ -89,12 +88,12 @@ CREATE INDEX code_chunks_emb_idx ON code_chunks
 | Backend | FastAPI (Python 3.10) |
 | Orchestration | LangGraph (parallel fan-out, checkpointing) |
 | Job Queue | Redis + ARQ |
-| Memory | Tiger Cloud (pgvectorscale DiskANN + hypertables) |
+| Memory | PostgreSQL (pgvector DiskANN / HNSW) |
 | LLM | Mistral (mistral-small-latest) + Google Gemini (gemini-2.5-flash fallback) |
 | Embeddings | Google Gemini (gemini-embedding-001) |
 | Sandbox | Docker (isolated code execution) |
 | Frontend | Next.js (review dashboard, HITL queue, trace viewer) |
-| Observability | OpenTelemetry + Tiger hypertables |
+| Observability | OpenTelemetry + events table |
 | Deploy | Railway |
 
 ---
@@ -122,42 +121,22 @@ ARQ Worker - LangGraph orchestrator
          post_to_github
        |         |         |
        v         v         v
-  Tiger       Tiger       Tiger
-  pgvector-   hyper-      continuous
-  scale       tables      aggregates
-  (memory)    (events)    (dashboard)
+   pgvector   events     continuous
+   vector     table      aggregates
+   memory     (events)   (dashboard)
 ```
 
 Modular monolith. One FastAPI service, 11 internal modules. See `docs/adr/ADR-002-architecture-style.md`.
 
 ---
 
-## Tiger Cloud Setup
+## Database Setup
 
-1. Sign up at [tigerdata.com/go/kol](https://tigerdata.com/go/kol) — $1,000 in free credits
-2. Create a **Hybrid applications** service (TimescaleDB + pgvectorscale)
-3. Copy your connection string and add to `.env`:
+Run the idempotent schema migration against your PostgreSQL database:
 
 ```bash
-cp .env.example .env
-# Set TIGER_DATABASE_URL=postgresql://tsdbadmin:...@host.tsdb.cloud.timescale.com:port/tsdb?sslmode=require
+psql $DATABASE_URL < scripts/migrations/2026-06-vector-init.sql
 ```
-
-4. Run the migration:
-
-```bash
-psql $TIGER_DATABASE_URL < scripts/migrations/2026-06-tiger-init.sql
-```
-
-5. Wire Tiger MCP into Claude Code (optional, for on-camera demo):
-
-```bash
-tiger mcp install   # select Claude Code
-```
-
-Full MCP setup guide: `scripts/setup-tiger-mcp.md`
-
-Architecture decision record: `docs/adr/ADR-003-tiger-cloud-data-layer.md`
 
 ---
 
@@ -218,31 +197,31 @@ This will:
 
 ## 20-Phase Build Roadmap
 
-Each phase is one chapter in the course. Ends green. Has a written gate before the next phase starts. Tiger Cloud is load-bearing in 5 phases.
+Each phase is one chapter in the course. Ends green. Has a written gate before the next phase starts.
 
-| # | Phase | Tiger |
-|---|---|---|
-| 0 | Cognitive Design — autonomy level, HITL boundaries | |
-| 1 | System Architecture — module graph, ADRs | |
-| 2 | Frontend Engineering — dashboard shell, streaming | |
-| 3 | Backend and API Layer — FastAPI, webhook, idempotency | |
-| 4 | Workflow Orchestration — LangGraph, parallel fan-out | |
-| 5 | LLM and Reasoning Layer — model routing, prompt registry | |
-| 6 | Memory Architecture — RAG on pgvectorscale, hybrid retrieval | Tiger |
-| 7 | Tooling and Sandboxing — tool registry, Docker sandbox | |
-| 8 | Multi-Agent Systems — 4 specialists, contracts, aggregator | |
-| 9 | Evaluation Systems — golden dataset, LLM-as-judge | |
-| 10 | Observability and Tracing — OTel spans in agent_events hypertable | Tiger |
-| 11 | Security Architecture — threat model, RBAC, audit trail | |
-| 12 | Reliability Engineering — retries, circuit breakers, idempotency | |
-| 13 | Infrastructure — Tiger Cloud provisioning, Tiger MCP wiring | Tiger |
-| 14 | Data Engineering — ingestion pipeline, hypertable schema design | Tiger |
-| 15 | Governance and Compliance — audit logs, explainability | |
-| 16 | Economics and Cost Control — per-agent cost via continuous aggregates | Tiger |
-| 17 | Developer Experience — prompt playground, trace viewer | |
-| 18 | CI/CD for AI — prompt versioning, eval gates, canary releases | |
-| 19 | Human in the Loop — approval queue, escalation, feedback | |
-| 20 | Continuous Learning — drift detection from continuous aggregates | Tiger |
+| # | Phase |
+|---|---|
+| 0 | Cognitive Design — autonomy level, HITL boundaries |
+| 1 | System Architecture — module graph, ADRs |
+| 2 | Frontend Engineering — dashboard shell, streaming |
+| 3 | Backend and API Layer — FastAPI, webhook, idempotency |
+| 4 | Workflow Orchestration — LangGraph, parallel fan-out |
+| 5 | LLM and Reasoning Layer — model routing, prompt registry |
+| 6 | Memory Architecture — RAG on pgvector, hybrid retrieval |
+| 7 | Tooling and Sandboxing — tool registry, Docker sandbox |
+| 8 | Multi-Agent Systems — 4 specialists, contracts, aggregator |
+| 9 | Evaluation Systems — golden dataset, LLM-as-judge |
+| 10 | Observability and Tracing — OTel spans in agent_events table |
+| 11 | Security Architecture — threat model, RBAC, audit trail |
+| 12 | Reliability Engineering — retries, circuit breakers, idempotency |
+| 13 | Infrastructure — provisioning and deployment |
+| 14 | Data Engineering — ingestion pipeline, schema design |
+| 15 | Governance and Compliance — audit logs, explainability |
+| 16 | Economics and Cost Control — per-agent cost via continuous aggregates |
+| 17 | Developer Experience — prompt playground, trace viewer |
+| 18 | CI/CD for AI — prompt versioning, eval gates, canary releases |
+| 19 | Human in the Loop — approval queue, escalation, feedback |
+| 20 | Continuous Learning — drift detection from continuous aggregates |
 
 ---
 
@@ -254,21 +233,20 @@ backend/
   agents/           4 specialist agents (security, quality, tests, docs)
   config/           Settings, environment
   data/             Ingestion pipeline, embedding, freshness
-  database/         Postgres async engine + Tiger pool
+  database/         Postgres async engine + vector pool
   economics/        Cost repository, budget caps
   job_queue/        ARQ worker, job definitions
-  memory/           TigerMemoryClient (pgvectorscale + hybrid search)
+  memory/           VectorMemoryClient (pgvector + hybrid search)
   observability/    Events spine, OTel traces
   orchestrator/     LangGraph graph, nodes, engine
   reliability/      Circuit breakers, retries
   tools/            Tool registry, Docker sandbox
 
 docs/
-  adr/              Architecture Decision Records (ADR-001 to ADR-003)
+  adr/              Architecture Decision Records (ADR-001 to ADR-002)
 
 scripts/
-  migrations/       2026-06-tiger-init.sql — idempotent schema DDL
-  setup-tiger-mcp.md
+  migrations/       2026-06-vector-init.sql — idempotent schema DDL
 
 eval/               Golden dataset + regression configs
 frontend/           Next.js dashboard
@@ -279,11 +257,11 @@ prompts/            Versioned prompt files per agent
 
 ## Key Design Decisions
 
-- Tiger replaces both Qdrant (vectors) and plain Postgres (structured) — one connection, one backup
+- pgvector replaces external vector databases alongside Postgres (structured) — one connection, one backup
 - Redis stays for the ARQ job queue (right tool for that job)
-- `agent_events` hypertable is the single source of truth for traces, costs, and audit
+- `agent_events` table is the single source of truth for traces, costs, and audit
 - Continuous aggregates keep the dashboard fast at any scale — no full table scans
-- DiskANN index over `code_chunks` gives 28x lower p95 latency than Pinecone at 99% recall
+- DiskANN / HNSW index over `code_chunks` gives fast similarity retrieval
 - HITL threshold is confidence-weighted — low-confidence findings queue for human review
 
 ---

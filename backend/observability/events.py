@@ -100,7 +100,7 @@ class ReviewEvent(StrEnum):
 
 
 # =============================================================================
-# AgentEvent — Tiger Cloud hypertable row
+# AgentEvent — agent_events table row
 #
 # Every span start/end, LLM call, tool call, and decision emits one row
 # into the agent_events hypertable. This is the spine of observability:
@@ -125,7 +125,7 @@ class AgentEvent:
     """
     A single row in the agent_events hypertable.
 
-    Maps directly to the schema in scripts/migrations/2026-06-tiger-init.sql.
+    Maps directly to the schema in scripts/migrations/2026-06-vector-init.sql.
     All time is UTC. span_id is auto-generated if not supplied.
     """
     review_id: str
@@ -175,10 +175,10 @@ async def emit_agent_event(pool: asyncpg.Pool | None, event: AgentEvent) -> None
     Write one AgentEvent row to the agent_events hypertable.
 
     Fire-and-forget: exceptions are caught and logged, never re-raised.
-    Pass pool=None to silently skip (e.g. in unit tests without Tiger).
+    Pass pool=None to silently skip (e.g. in unit tests without DB pool).
 
     Args:
-        pool:  asyncpg connection pool for Tiger Cloud. None = no-op.
+        pool:  asyncpg connection pool. None = no-op.
         event: The AgentEvent row to insert.
     """
     if pool is None:

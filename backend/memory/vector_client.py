@@ -1,19 +1,11 @@
-# backend/memory/tiger_client.py
+# backend/memory/vector_client.py
 #
-# Tiger Cloud memory client — replaces qdrant_client.py entirely.
+# pgvector memory client — semantic search over code embeddings.
 #
-# WHY TIGER INSTEAD OF QDRANT?
-# (ADR-003: Tiger Cloud Data Layer)
-#
-# Three separate stores existed before:
-#   - Qdrant: vector search (ANN, HNSW index)
-#   - PostgreSQL: structured history
-#   - Redis: job queue
-#
-# Tiger Cloud (TimescaleDB + pgvectorscale) collapses the first two:
-#   - pgvectorscale DiskANN replaces Qdrant's HNSW
-#   - Same Postgres connection serves RAG queries AND structured queries
-#   - One connection pool, one backup policy, one place to reason about data
+# ARCHITECTURE:
+# pgvectorscale DiskANN replaces the original Qdrant HNSW index.
+# Same Postgres connection serves RAG queries AND structured queries.
+# One connection pool, one backup policy, one place to reason about data.
 #
 # DISKANN VS HNSW (why DiskANN wins on code RAG):
 # Benchmark: 50M Cohere embeddings, 768 dims
@@ -23,7 +15,6 @@
 #   segments. Streaming access pattern matches sequential disk read, not random access.
 #
 # FRESHNESS DECAY:
-# Qdrant has no native time-aware scoring. We would need a custom payload filter.
 # DiskANN + plain SQL: score * exp(-hours_since_update / 168.0)
 # 168 hours = 1 week half-life. A file updated today scores 1.0. A week-old file 0.5.
 # Incentivizes retrieving recently modified code — directly relevant to the PR under review.
@@ -35,8 +26,8 @@
 # k=60 dampens outliers. Result: consistently better top-5 recall than either alone.
 #
 # DEPENDENCY DIRECTION:
-#   tiger_client.py imports from: asyncpg, pgvector, backend.config.settings
-#   tiger_client.py does NOT import from: agents, orchestrator, observability
+#   vector_client.py imports from: asyncpg, pgvector, backend.config.settings
+#   vector_client.py does NOT import from: agents, orchestrator, observability
 #   This keeps it at the memory layer — correct per ADR-002 dependency rules.
 
 from __future__ import annotations
@@ -77,12 +68,12 @@ _FRESHNESS_HALF_LIFE_HOURS: float = 168.0
 @dataclass
 class CodeChunk:
     """
-    A single embedded code chunk stored in Tiger Cloud.
+    A single embedded code chunk stored in PostgreSQL (pgvector).
 
     repo:        GitHub repo full name, e.g. "owner/repo"
     path:        File path relative to repo root, e.g. "backend/main.py"
     content:     The raw text of this chunk
-    embedding:   Dense vector from text-embedding-3-large, 256 dims
+    embedding:   Dense vector from the embedding model
     chunk_index: Position of this chunk within the file (0-based)
     symbol:      Optional function/class name extracted from AST
     token_count: Approximate token count (used for context budget)
@@ -101,21 +92,21 @@ class CodeChunk:
 
 
 # ---------------------------------------------------------------------------
-# TigerMemoryClient
+# VectorMemoryClient
 #
 # Thin async wrapper around asyncpg. One method per capability.
-# The connection pool is shared with the events spine (same Tiger Cloud instance).
+# The connection pool is shared with the events spine (same Postgres instance).
 # ---------------------------------------------------------------------------
-class TigerMemoryClient:
+class VectorMemoryClient:
     """
-    Tiger Cloud semantic memory client.
+    pgvector semantic memory client.
 
     Manages code embeddings in the code_chunks table using pgvectorscale
     DiskANN for approximate nearest-neighbor search.
 
     Usage:
-        pool = await TigerMemoryClient.create_pool()
-        client = TigerMemoryClient(pool)
+        pool = await VectorMemoryClient.create_pool()
+        client = VectorMemoryClient(pool)
         chunks = await client.search(embedding, repo="owner/repo")
     """
 
@@ -134,7 +125,7 @@ class TigerMemoryClient:
     # Pool factory
     #
     # Called once at application startup (from backend/database/postgres.py
-    # init_tiger_schema). Returns a pool stored at module level in postgres.py.
+    # init_vector_schema). Returns a pool stored at module level in postgres.py.
     # -------------------------------------------------------------------------
     @classmethod
     async def create_pool(
@@ -144,13 +135,13 @@ class TigerMemoryClient:
         max_size: int = 10,
     ) -> asyncpg.Pool:
         """
-        Creates an asyncpg connection pool for Tiger Cloud.
+        Creates an asyncpg connection pool for vector memory.
 
         Registers the pgvector VECTOR codec so asyncpg can serialize/deserialize
         embedding columns transparently as Python lists.
 
         Args:
-            dsn:      Tiger Cloud DSN. Falls back to settings if not provided.
+            dsn:      Database DSN. Falls back to DATABASE_URL if not provided.
             min_size: Minimum pool connections (default 2).
             max_size: Maximum pool connections (default 10).
 
@@ -158,8 +149,8 @@ class TigerMemoryClient:
             An asyncpg.Pool ready for use.
         """
         cfg = get_settings()
-        # Resolve DSN: explicit arg > TIGER_DATABASE_URL env > DATABASE_URL fallback
-        resolved_dsn = dsn or cfg.tiger_database_url or cfg.database_url
+        # Resolve DSN: explicit arg > DATABASE_URL fallback
+        resolved_dsn = dsn or cfg.database_url
         # asyncpg DSN format: postgres:// or postgresql+asyncpg:// -> strip driver prefix
         resolved_dsn = resolved_dsn.replace("postgresql+asyncpg://", "postgresql://")
 
@@ -175,7 +166,7 @@ class TigerMemoryClient:
             command_timeout=30,
         )
         logger.info(
-            "Tiger Cloud pool created | host=%s min=%d max=%d",
+            "Vector memory pool created | host=%s min=%d max=%d",
             resolved_dsn.split("@")[-1].split("/")[0] if "@" in resolved_dsn else "local",
             min_size,
             max_size,
@@ -459,7 +450,7 @@ class TigerMemoryClient:
     # -------------------------------------------------------------------------
     async def health_check(self) -> dict[str, Any]:
         """
-        Returns health status for Tiger Cloud memory store.
+        Returns health status for the vector memory store.
 
         Checks:
         - Connection pool is alive (SELECT 1)
@@ -488,7 +479,7 @@ class TigerMemoryClient:
                 "diskann_index": index_exists,
             }
         except Exception as exc:  # noqa: BLE001
-            logger.error("Tiger memory health check failed: %s", exc)
+            logger.error("Vector memory health check failed: %s", exc)
             return {"status": "error", "error": str(exc)}
 
     # -------------------------------------------------------------------------
@@ -514,26 +505,26 @@ class TigerMemoryClient:
 # Module-level singleton
 #
 # Created during application startup in backend/database/postgres.py
-# init_tiger_schema(). Stored here so any module can import and use it
+# init_vector_schema(). Stored here so any module can import and use it
 # without needing to pass a pool around.
 #
 # Usage from other modules:
-#   from backend.memory.tiger_client import tiger_memory
-#   chunks = await tiger_memory.search(embedding, repo="owner/repo")
+#   from backend.memory.vector_client import vector_memory
+#   chunks = await vector_memory.search(embedding, repo="owner/repo")
 # ---------------------------------------------------------------------------
-tiger_memory: TigerMemoryClient | None = None
+vector_memory: VectorMemoryClient | None = None
 
 
-def get_tiger_memory() -> TigerMemoryClient:
+def get_vector_memory() -> VectorMemoryClient:
     """
-    Returns the module-level TigerMemoryClient singleton.
+    Returns the module-level VectorMemoryClient singleton.
 
-    Raises RuntimeError if called before init_tiger_schema() has run.
+    Raises RuntimeError if called before init_vector_schema() has run.
     This is intentional — callers should never use memory before startup completes.
     """
-    if tiger_memory is None:
+    if vector_memory is None:
         raise RuntimeError(
-            "TigerMemoryClient not initialized. "
-            "Call init_tiger_schema() during application startup before using tiger_memory."
+            "VectorMemoryClient not initialized. "
+            "Call init_vector_schema() during application startup before using vector_memory."
         )
-    return tiger_memory
+    return vector_memory

@@ -442,13 +442,12 @@ def _search_similar_findings_handler(args: dict[str, Any]) -> dict[str, Any]:
     try:
         # Import the existing memory layer (Phase 6) — lazy to keep dependency direction
         from backend.memory.embedder import embed_text
-        # TIGER: was qdrant_client.search_similar_code
-        from backend.memory.tiger_client import get_tiger_memory
+        from backend.memory.vector_client import get_vector_memory
         # TODO: wire embedding + repo args — see context_retriever.py for pattern
-        # chunks = await get_tiger_memory().search(query_embedding, repo=repo, hybrid=True, query_text=query_text, top_k=5)
+        # chunks = await get_vector_memory().search(query_embedding, repo=repo, hybrid=True, query_text=query_text, top_k=5)
 
         embedding = embed_text(query)
-        raw_results = get_tiger_memory().search(embedding, hybrid=True, query_text=query, top_k=limit)
+        raw_results = get_vector_memory().search(embedding, hybrid=True, query_text=query, top_k=limit)
 
         results = [
             {

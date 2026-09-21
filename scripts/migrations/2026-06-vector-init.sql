@@ -1,14 +1,11 @@
 -- =============================================================================
--- 2026-06-tiger-init.sql
+-- 2026-06-vector-init.sql
 --
--- Tiger Cloud (TimescaleDB) schema for AI PR Review Agent.
+-- Vector and timeseries schema for AI PR Review Agent.
 -- Idempotent: safe to run multiple times.
 --
--- Run against Tiger Cloud:
---   psql "$TIGER_DATABASE_URL" -f scripts/migrations/2026-06-tiger-init.sql
---
--- Or locally with timescaledb-ha Docker:
---   psql "postgres://postgres:password@localhost:5432/pr_review" -f scripts/migrations/2026-06-tiger-init.sql
+-- Run:
+--   psql "$DATABASE_URL" -f scripts/migrations/2026-06-vector-init.sql
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -174,10 +171,10 @@ SELECT add_continuous_aggregate_policy(
 );
 
 -- ---------------------------------------------------------------------------
--- STEP 4: Existing structured tables (migrate to Tiger instance)
+-- STEP 4: Existing structured tables
 --
 -- These are the same tables defined in backend/database/models.py.
--- Keeping them on the same Tiger connection eliminates a second DB connection.
+-- Keeping them on the same connection eliminates a second DB connection.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS pr_review_records (
     id                TEXT        PRIMARY KEY,

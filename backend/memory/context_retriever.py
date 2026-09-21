@@ -58,8 +58,7 @@ import logging
 
 from backend.config.settings import Settings, get_settings
 from backend.memory.embedder import EmbeddingError, embed_text
-# TIGER: was Qdrant search — now pgvectorscale DiskANN hybrid retrieval
-from backend.memory.tiger_client import get_tiger_memory  # replaces QdrantMemoryClient / search_similar_code
+from backend.memory.vector_client import get_vector_memory
 
 logger = logging.getLogger(__name__)
 
@@ -154,12 +153,11 @@ async def retrieve_context_for_diff(
         )
         return ""
 
-    # Step 3: Search Tiger (pgvectorscale DiskANN hybrid retrieval).
-    # TIGER: was Qdrant search — now pgvectorscale DiskANN hybrid retrieval
-    # get_tiger_memory() returns a module-level singleton; search() handles errors
+    # Step 3: Search vector memory (pgvectorscale DiskANN hybrid retrieval).
+    # get_vector_memory() returns a module-level singleton; search() handles errors
     # and returns [] on any backend failure (graceful degradation preserved).
     try:
-        client = get_tiger_memory()
+        client = get_vector_memory()
         results = await client.search(
             query_vector,
             repo=repo_full_name,
@@ -169,7 +167,7 @@ async def retrieve_context_for_diff(
         )
     except Exception as e:
         logger.warning(
-            "retrieve_context | tiger_search_failed | repo=%s error=%s -> returning ''",
+            "retrieve_context | vector_search_failed | repo=%s error=%s -> returning ''",
             repo_full_name, e,
         )
         return ""

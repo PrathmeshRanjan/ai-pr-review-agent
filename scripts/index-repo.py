@@ -73,10 +73,10 @@ async def main():
         sys.exit(1)
 
     logger.info("Initializing database connections and vector schema...")
-    from backend.database.postgres import init_db, init_tiger_schema
+    from backend.database.postgres import init_db, init_vector_schema
     try:
         await init_db()
-        await init_tiger_schema()
+        await init_vector_schema()
     except Exception as e:
         logger.error("Failed to connect to database: %s", e)
         print("\n[Error] Database initialization failed. Check DATABASE_URL in .env.")

@@ -324,10 +324,10 @@ def get_session_factory() -> async_sessionmaker:
 
 
 # ---------------------------------------------------------------------------
-# Tiger Cloud: asyncpg pool + schema init
+# Vector Memory: asyncpg pool + schema init
 #
-# Tiger Cloud (TimescaleDB) runs alongside the existing SQLAlchemy engine.
-# They share the same physical instance (same TIGER_DATABASE_URL) but use
+# Dedicated asyncpg connection pool for vector search and hot telemetry paths.
+# They share the same physical Postgres instance (DATABASE_URL) but use
 # different drivers:
 #   - SQLAlchemy/asyncpg: structured tables (pr_review_records, findings, etc.)
 #   - bare asyncpg pool:  hot paths (agent_events inserts, code_chunks upserts)
@@ -340,31 +340,31 @@ def get_session_factory() -> async_sessionmaker:
 import asyncpg as _asyncpg
 from pgvector.asyncpg import register_vector as _register_vector
 
-_tiger_pool: "_asyncpg.Pool | None" = None
+_vector_pool: "_asyncpg.Pool | None" = None
 
 
-def get_tiger_pool() -> "_asyncpg.Pool | None":
+def get_vector_pool() -> "_asyncpg.Pool | None":
     """
-    Returns the module-level Tiger Cloud asyncpg pool.
-    None if init_tiger_schema() has not been called yet.
+    Returns the module-level vector memory asyncpg pool.
+    None if init_vector_schema() has not been called yet.
     """
-    return _tiger_pool
+    return _vector_pool
 
 
-async def init_tiger_schema() -> None:
+async def init_vector_schema() -> None:
     """
-    Creates the Tiger Cloud asyncpg pool and runs the full schema DDL.
+    Creates the vector memory asyncpg pool and runs the full schema DDL.
 
     Called once at startup from main.py lifespan, after init_db().
-    Reads the SQL migration from scripts/migrations/2026-06-tiger-init.sql
+    Reads the SQL migration from scripts/migrations/2026-06-vector-init.sql
     and executes it idempotently (all statements use IF NOT EXISTS).
 
-    The pool is stored at module level (_tiger_pool) and retrieved via
-    get_tiger_pool() by any module that needs raw asyncpg access.
+    The pool is stored at module level (_vector_pool) and retrieved via
+    get_vector_pool() by any module that needs raw asyncpg access.
     """
-    global _tiger_pool
+    global _vector_pool
     cfg = get_settings()
-    dsn = cfg.tiger_database_url or cfg.database_url
+    dsn = cfg.database_url
     # asyncpg wants plain postgresql:// not postgresql+asyncpg:// (that's SQLAlchemy syntax)
     dsn = dsn.replace("postgresql+asyncpg://", "postgresql://").replace("postgres+asyncpg://", "postgresql://")
 
@@ -388,7 +388,7 @@ async def init_tiger_schema() -> None:
         except Exception as exc:
             logger.debug("register_vector on conn skipped: %s", exc)
 
-    _tiger_pool = await _asyncpg.create_pool(
+    _vector_pool = await _asyncpg.create_pool(
         dsn=dsn,
         min_size=2,
         max_size=10,
@@ -399,32 +399,34 @@ async def init_tiger_schema() -> None:
     # Run the idempotent migration SQL.
     migration_path = (
         pathlib.Path(__file__).resolve().parent.parent.parent
-        / "scripts" / "migrations" / "2026-06-tiger-init.sql"
+        / "scripts" / "migrations" / "2026-06-vector-init.sql"
     )
+
     if migration_path.exists():
         sql = migration_path.read_text()
         clean_sql = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
         statements = [s.strip() for s in clean_sql.split(";") if s.strip()]
-        async with _tiger_pool.acquire() as conn:
+        async with _vector_pool.acquire() as conn:
             for stmt in statements:
                 try:
                     await conn.execute(stmt)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Tiger migration stmt warning (non-fatal): %s", exc)
-        logger.info("Tiger Cloud schema migration applied | path=%s", migration_path)
+                    logger.warning("Vector schema migration stmt warning (non-fatal): %s", exc)
+        logger.info("Vector memory schema migration applied | path=%s", migration_path)
     else:
-        logger.warning("Tiger migration file not found at %s — skipping DDL", migration_path)
+        logger.warning("Vector migration file not found at %s — skipping DDL", migration_path)
 
-    # Wire the singleton into tiger_client module so get_tiger_memory() works.
+    # Wire the singleton into vector_client module so get_vector_memory() works.
     try:
-        from backend.memory import tiger_client as _tc
-        _tc.tiger_memory = _tc.TigerMemoryClient(_tiger_pool)
-        logger.info("TigerMemoryClient singleton initialized.")
+        from backend.memory import vector_client as _vc
+        _vc.vector_memory = _vc.VectorMemoryClient(_vector_pool)
+        logger.info("VectorMemoryClient singleton initialized.")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("TigerMemoryClient init warning: %s", exc)
+        logger.warning("VectorMemoryClient init warning: %s", exc)
 
     logger.info(
-        "Tiger Cloud pool ready | host=%s",
+        "Vector memory pool ready | host=%s",
         dsn.split("@")[-1].split("/")[0] if "@" in dsn else "local",
     )
+
 

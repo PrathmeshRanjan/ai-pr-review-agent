@@ -41,9 +41,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config.settings import get_settings
-from backend.database.postgres import init_db
-from backend.memory.context_retriever import retrieve_context_for_diff  # noqa: F401 (used in routes)
-from backend.database.postgres import init_tiger_schema  # TIGER: replaces ensure_collection
+from backend.database.postgres import init_db, init_vector_schema
 from backend.memory.redis_client import redis_client
 from backend.webhook_receiver.router import router as webhook_router
 
@@ -144,23 +142,23 @@ async def lifespan(app: FastAPI):
         logger.warning("Postgres unavailable at startup — will retry on first request: %s", exc)
 
     # -------------------------------------------------------------------------
-    # Tiger Cloud — init connection pool + run schema migration
+    # Vector Memory — init connection pool + run schema migration
     #
-    # init_tiger_schema() creates the asyncpg pool, registers pgvector codec,
-    # runs the idempotent DDL from scripts/migrations/2026-06-tiger-init.sql,
-    # and wires the TigerMemoryClient singleton.
+    # init_vector_schema() creates the asyncpg pool, registers pgvector codec,
+    # runs the idempotent DDL from scripts/migrations/2026-06-vector-init.sql,
+    # and wires the VectorMemoryClient singleton.
     #
     # WHY BEST-EFFORT (try/except, not fail-fast):
-    #   Tiger Cloud is the memory + events spine, but reviews can technically
-    #   run diff-only if Tiger is temporarily unreachable at cold boot.
+    #   Vector memory is the memory + events spine, but reviews can technically
+    #   run diff-only if vector storage is temporarily unreachable at cold boot.
     #   We log the warning and let the /health endpoint surface the error.
     #   (Production-Hardening.md: "Optional deps log warning, never crash startup.")
     try:
-        await init_tiger_schema()
-        logger.info("Tiger Cloud ready — memory + events spine online.")
+        await init_vector_schema()
+        logger.info("Vector memory ready — memory + events spine online.")
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "Tiger Cloud unavailable at startup — RAG context and events disabled: %s", exc
+            "Vector memory unavailable at startup — RAG context and events disabled: %s", exc
         )
 
     yield  # <-- server is running, accepting requests
@@ -297,14 +295,14 @@ async def _check_redis() -> str:
         return f"error: {exc}"
 
 
-async def _check_tiger() -> str:
+async def _check_vector_memory() -> str:
     """
-    Check Tiger Cloud connection health via TigerMemoryClient.health_check().
+    Check vector memory connection health via VectorMemoryClient.health_check().
     Returns 'ok' or an error string. Never raises.
     """
     try:
-        from backend.memory.tiger_client import get_tiger_memory
-        client = get_tiger_memory()
+        from backend.memory.vector_client import get_vector_memory
+        client = get_vector_memory()
         result = await client.health_check()
         if result.get("status") == "ok":
             return f"ok (chunks={result.get('chunk_count', 0)})"
@@ -318,7 +316,7 @@ async def _check_tiger() -> str:
     tags=["ops"],
     summary="Readiness probe",
     description=(
-        "Checks Postgres, Redis, and Tiger Cloud reachability. "
+        "Checks Postgres, Redis, and Vector Memory reachability. "
         "Returns 200 when all services are healthy, 503 when any are degraded."
     ),
 )
@@ -334,7 +332,7 @@ async def health_check() -> JSONResponse:
         "services": {
           "postgres": "ok" | "error: ...",
           "redis":    "ok" | "error: ...",
-          "tiger":    "ok" | "degraded ..." | "error: ..."
+          "vector_memory": "ok" | "degraded ..." | "error: ..."
         },
         "circuit_breakers": [
           {"name": "...", "state": "CLOSED", "failures": 0}, ...
@@ -345,12 +343,11 @@ async def health_check() -> JSONResponse:
     """
     postgres_status = await _check_postgres()
     redis_status = await _check_redis()
-    tiger_status = await _check_tiger()
+    vector_status = await _check_vector_memory()
 
     cfg = get_settings()
 
     # "degraded" if any hard dependency (Postgres, Redis) is unhealthy.
-    # Qdrant failure is soft — reviews still run, just without RAG context.
     hard_ok = (
         postgres_status == "ok"
         and redis_status == "ok"
@@ -364,7 +361,7 @@ async def health_check() -> JSONResponse:
         "services": {
             "postgres": postgres_status,
             "redis": redis_status,
-            "tiger": tiger_status,
+            "vector_memory": vector_status,
         },
         "circuit_breakers": list_breaker_summaries(),
     }
