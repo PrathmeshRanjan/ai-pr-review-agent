@@ -158,14 +158,21 @@ async def retrieve_context_for_diff(
     # TIGER: was Qdrant search — now pgvectorscale DiskANN hybrid retrieval
     # get_tiger_memory() returns a module-level singleton; search() handles errors
     # and returns [] on any backend failure (graceful degradation preserved).
-    client = get_tiger_memory()
-    results = await client.search(
-        query_vector,
-        repo=repo_full_name,
-        hybrid=True,
-        query_text=query_text,
-        top_k=5,
-    )
+    try:
+        client = get_tiger_memory()
+        results = await client.search(
+            query_vector,
+            repo=repo_full_name,
+            hybrid=True,
+            query_text=query_text,
+            top_k=5,
+        )
+    except Exception as e:
+        logger.warning(
+            "retrieve_context | tiger_search_failed | repo=%s error=%s -> returning ''",
+            repo_full_name, e,
+        )
+        return ""
 
     # Step 4: Filter by minimum similarity score.
     # (RAG-Architecture.md: "If both agree, confidence rises; if neither agrees, skip.")

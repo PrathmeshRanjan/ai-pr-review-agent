@@ -348,6 +348,7 @@ class LLMClient:
             "generationConfig": {
                 "temperature": 0.1,
                 "maxOutputTokens": max_tokens,
+                "thinkingConfig": {"thinkingBudget": 0},
             },
         }
         if system_prompt:
@@ -379,8 +380,11 @@ class LLMClient:
                 candidates = data.get("candidates", [])
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        raw_content = parts[0].get("text", "{}")
+                    non_thought = [p.get("text", "") for p in parts if not p.get("thought", False) and "text" in p]
+                    if non_thought:
+                        raw_content = non_thought[-1]
+                    elif parts:
+                        raw_content = parts[-1].get("text", "{}")
 
                 usage = data.get("usageMetadata", {})
                 input_tokens = usage.get("promptTokenCount", 0)

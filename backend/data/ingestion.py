@@ -38,6 +38,7 @@
 # CODE FILE EXTENSIONS:
 #   We index source code only — not docs, configs, or binary files.
 
+import asyncio
 import logging
 from typing import Any
 
@@ -457,6 +458,7 @@ async def ingest_repository(repo_full_name: str) -> dict[str, int]:
                 "ingest_repository | embedded | repo=%s path=%s",
                 repo_full_name, file_path,
             )
+            await asyncio.sleep(0.5)
 
     logger.info(
         "ingest_repository | complete | repo=%s "

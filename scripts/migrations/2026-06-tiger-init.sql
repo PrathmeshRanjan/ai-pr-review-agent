@@ -16,21 +16,6 @@
 -- ---------------------------------------------------------------------------
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Optional extensions on Tiger Cloud / TimescaleDB instances
-DO $$
-BEGIN
-    CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-EXCEPTION WHEN OTHERS THEN
-    NULL;
-END $$;
-
-DO $$
-BEGIN
-    CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
-EXCEPTION WHEN OTHERS THEN
-    NULL;
-END $$;
-
 -- ---------------------------------------------------------------------------
 -- STEP 1: Semantic Memory — code_chunks (replaces Qdrant)
 --
@@ -49,19 +34,25 @@ CREATE TABLE IF NOT EXISTS code_chunks (
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- StreamingDiskANN index (Tiger Cloud pgvectorscale) with fallback to HNSW (standard pgvector)
-DO $$
-BEGIN
-    CREATE INDEX IF NOT EXISTS code_chunks_emb_idx
-        ON code_chunks USING diskann (embedding vector_cosine_ops);
-EXCEPTION WHEN OTHERS THEN
-    BEGIN
-        CREATE INDEX IF NOT EXISTS code_chunks_emb_idx
-            ON code_chunks USING hnsw (embedding vector_cosine_ops);
-    EXCEPTION WHEN OTHERS THEN
-        NULL;
-    END;
-END $$;
+-- Cosine similarity index for ANN search
+CREATE INDEX IF NOT EXISTS code_chunks_emb_idx
+    ON code_chunks USING hnsw (embedding vector_cosine_ops);
+
+-- Lookup index for freshness queries
+CREATE INDEX IF NOT EXISTS code_chunks_repo_path_idx
+    ON code_chunks (repo, path, updated_at DESC);
+
+-- Unique constraint: each (repo, path, chunk_index) is one chunk
+CREATE UNIQUE INDEX IF NOT EXISTS code_chunks_unique_idx
+    ON code_chunks (repo, path, chunk_index);
+
+-- Full-text search index for hybrid retrieval (semantic + keyword)
+ALTER TABLE code_chunks
+    ADD COLUMN IF NOT EXISTS content_tsv TSVECTOR
+        GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+
+CREATE INDEX IF NOT EXISTS code_chunks_fts_idx
+    ON code_chunks USING GIN (content_tsv);
 
 -- Lookup index for freshness queries
 CREATE INDEX IF NOT EXISTS code_chunks_repo_path_idx

@@ -782,6 +782,34 @@ async def post_review(state: PRReviewState) -> dict[str, Any]:
                 state["workflow_id"], hitl_err,
             )
 
+        # Persist review to Postgres so GET /api/v1/reviews reflects the completed verdict
+        try:
+            from backend.database.postgres import get_engine
+            from backend.database.repository import save_review
+            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+            _factory = async_sessionmaker(
+                bind=get_engine(), class_=AsyncSession, expire_on_commit=False
+            )
+            async with _factory() as session:
+                await save_review(
+                    session,
+                    review_id=state["workflow_id"],
+                    repo_full_name=state["repo_full_name"],
+                    pr_number=state["pr_number"],
+                    pr_title=state["pr_title"],
+                    head_commit_sha=state["head_commit_sha"],
+                    pr_diff=state["pr_diff"],
+                    verdict=state["verdict"].value if state["verdict"] else "needs_human_review",
+                    status=ReviewStatus.COMPLETED.value,
+                    overall_confidence=state["overall_confidence"],
+                    needs_human_review=state["needs_human_review"],
+                    human_review_reason=state["human_review_reason"],
+                    findings=state["final_findings"],
+                    github_review_id=None,
+                )
+        except Exception as db_err:
+            logger.error("post_review | hitl | postgres_save_failed | %s", db_err)
+
         return {
             "review_posted": False,
             "github_review_id": None,

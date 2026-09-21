@@ -62,6 +62,7 @@ from backend.core import (
     MemoryStoreError,
     WorkflowNotFoundError,
 )
+from backend.database.postgres import init_db, init_tiger_schema
 from backend.memory.redis_client import redis_client
 from backend.orchestrator.langgraph_engine import LangGraphEngine
 
@@ -376,9 +377,21 @@ class WorkerSettings:
 
     @staticmethod
     async def on_startup(ctx: dict) -> None:
-        """Connect the shared redis_client used by run_pr_review."""
+        """Connect redis_client and initialize database and tiger memory."""
         await redis_client.connect()
         logger.info("ARQ worker redis_client connected.")
+
+        try:
+            await init_db()
+            logger.info("ARQ worker Postgres initialized.")
+        except Exception as e:
+            logger.warning("ARQ worker Postgres init warning: %s", e)
+
+        try:
+            await init_tiger_schema()
+            logger.info("ARQ worker Tiger Cloud memory initialized.")
+        except Exception as e:
+            logger.warning("ARQ worker Tiger memory init warning: %s", e)
 
     @staticmethod
     async def on_shutdown(ctx: dict) -> None:

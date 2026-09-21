@@ -19,7 +19,9 @@
 #   Catches external API errors and raises EmbeddingError so context_retriever
 #   can gracefully fall back without crashing the review workflow.
 
+import asyncio
 import logging
+import random
 from typing import Any
 
 import httpx
@@ -92,26 +94,55 @@ async def embed_text(text: str) -> list[float]:
         "outputDimensionality": EMBEDDING_DIMENSIONS,
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+    max_retries = 5
+    base_delay = 2.0
 
-        vector = data.get("embedding", {}).get("values", [])
-        if not vector:
-            raise EmbeddingError(f"No embedding values returned in response: {data}")
+    for attempt in range(max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 429 and attempt < max_retries:
+                    retry_after = resp.headers.get("Retry-After")
+                    delay = float(retry_after) if retry_after else (base_delay * (2 ** attempt) + random.uniform(0.5, 1.5))
+                    logger.warning(
+                        "embed_text | 429 rate limit | retrying in %.1fs (attempt %d/%d)",
+                        delay, attempt + 1, max_retries
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
 
-        logger.debug(
-            "embed_text | success | model=%s dims=%d input_chars=%d",
-            model, len(vector), len(text),
-        )
-        return vector
+            vector = data.get("embedding", {}).get("values", [])
+            if not vector:
+                raise EmbeddingError(f"No embedding values returned in response: {data}")
 
-    except Exception as e:
-        raise EmbeddingError(
-            f"Google Gemini embedding call failed: {type(e).__name__}: {e}"
-        ) from e
+            logger.debug(
+                "embed_text | success | model=%s dims=%d input_chars=%d",
+                model, len(vector), len(text),
+            )
+            return vector
+
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429 and attempt < max_retries:
+                delay = base_delay * (2 ** attempt) + random.uniform(0.5, 1.5)
+                logger.warning(
+                    "embed_text | 429 rate limit | retrying in %.1fs (attempt %d/%d)",
+                    delay, attempt + 1, max_retries
+                )
+                await asyncio.sleep(delay)
+                continue
+            raise EmbeddingError(
+                f"Google Gemini embedding call failed: {type(e).__name__}: {e}"
+            ) from e
+        except Exception as e:
+            if attempt < max_retries and "429" in str(e):
+                delay = base_delay * (2 ** attempt) + random.uniform(0.5, 1.5)
+                await asyncio.sleep(delay)
+                continue
+            raise EmbeddingError(
+                f"Google Gemini embedding call failed: {type(e).__name__}: {e}"
+            ) from e
 
 
 async def embed_batch(texts: list[str]) -> list[list[float]]:
@@ -162,29 +193,58 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
         for _, t in non_empty
     ]
 
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json={"requests": requests_payload})
-            resp.raise_for_status()
-            data = resp.json()
+    max_retries = 5
+    base_delay = 2.0
 
-        embeddings_data = data.get("embeddings", [])
-        if len(embeddings_data) != len(non_empty):
-            raise EmbeddingError(
-                f"Batch embedding count mismatch: expected {len(non_empty)}, got {len(embeddings_data)}"
+    for attempt in range(max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(url, json={"requests": requests_payload})
+                if resp.status_code == 429 and attempt < max_retries:
+                    retry_after = resp.headers.get("Retry-After")
+                    delay = float(retry_after) if retry_after else (base_delay * (2 ** attempt) + random.uniform(0.5, 1.5))
+                    logger.warning(
+                        "embed_batch | 429 rate limit | retrying in %.1fs (attempt %d/%d)",
+                        delay, attempt + 1, max_retries
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+
+            embeddings_data = data.get("embeddings", [])
+            if len(embeddings_data) != len(non_empty):
+                raise EmbeddingError(
+                    f"Batch embedding count mismatch: expected {len(non_empty)}, got {len(embeddings_data)}"
+                )
+
+            results: list[list[float]] = [[0.0] * EMBEDDING_DIMENSIONS for _ in texts]
+            for (position, _), emb_obj in zip(non_empty, embeddings_data):
+                results[position] = emb_obj.get("values", [0.0] * EMBEDDING_DIMENSIONS)
+
+            logger.debug(
+                "embed_batch | success | model=%s batch_size=%d",
+                model, len(non_empty),
             )
+            return results
 
-        results: list[list[float]] = [[0.0] * EMBEDDING_DIMENSIONS for _ in texts]
-        for (position, _), emb_obj in zip(non_empty, embeddings_data):
-            results[position] = emb_obj.get("values", [0.0] * EMBEDDING_DIMENSIONS)
-
-        logger.debug(
-            "embed_batch | success | model=%s batch_size=%d",
-            model, len(non_empty),
-        )
-        return results
-
-    except Exception as e:
-        raise EmbeddingError(
-            f"Google Gemini batch embedding call failed: {type(e).__name__}: {e}"
-        ) from e
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429 and attempt < max_retries:
+                delay = base_delay * (2 ** attempt) + random.uniform(0.5, 1.5)
+                logger.warning(
+                    "embed_batch | 429 rate limit | retrying in %.1fs (attempt %d/%d)",
+                    delay, attempt + 1, max_retries
+                )
+                await asyncio.sleep(delay)
+                continue
+            raise EmbeddingError(
+                f"Google Gemini batch embedding call failed: {type(e).__name__}: {e}"
+            ) from e
+        except Exception as e:
+            if attempt < max_retries and "429" in str(e):
+                delay = base_delay * (2 ** attempt) + random.uniform(0.5, 1.5)
+                await asyncio.sleep(delay)
+                continue
+            raise EmbeddingError(
+                f"Google Gemini batch embedding call failed: {type(e).__name__}: {e}"
+            ) from e

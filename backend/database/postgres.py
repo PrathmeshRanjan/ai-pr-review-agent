@@ -403,11 +403,8 @@ async def init_tiger_schema() -> None:
     )
     if migration_path.exists():
         sql = migration_path.read_text()
-        # Split on semicolons, skip comments and blank statements.
-        statements = [
-            s.strip() for s in re.split(r";\s*", sql)
-            if s.strip() and not s.strip().startswith("--")
-        ]
+        clean_sql = re.sub(r"--.*$", "", sql, flags=re.MULTILINE)
+        statements = [s.strip() for s in clean_sql.split(";") if s.strip()]
         async with _tiger_pool.acquire() as conn:
             for stmt in statements:
                 try:
@@ -421,7 +418,7 @@ async def init_tiger_schema() -> None:
     # Wire the singleton into tiger_client module so get_tiger_memory() works.
     try:
         from backend.memory import tiger_client as _tc
-        _tc.tiger_memory = TigerMemoryClient(_tiger_pool)
+        _tc.tiger_memory = _tc.TigerMemoryClient(_tiger_pool)
         logger.info("TigerMemoryClient singleton initialized.")
     except Exception as exc:  # noqa: BLE001
         logger.warning("TigerMemoryClient init warning: %s", exc)
