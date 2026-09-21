@@ -826,6 +826,49 @@ async def post_review(state: PRReviewState) -> dict[str, Any]:
                 state["workflow_id"], hitl_err,
             )
 
+        # ---------------------------------------------------------------------
+        # Option B: Publish transparent review comment to GitHub so author sees
+        # the findings immediately, clearly labeled as pending human verification.
+        # ---------------------------------------------------------------------
+        cfg = get_settings()
+        github_review_id: int | None = None
+        banner = (
+            "> [!WARNING]\n"
+            "> **AI Review — Pending Human Verification**\n"
+            f"> This review detected items requiring human sign-off before merge.\n"
+            f"> **Reason:** {state.get('human_review_reason', 'Confidence threshold / Safety-threshold rule')}\n"
+            f"> **Overall Confidence:** {state.get('overall_confidence', 0.0) * 100:.0f}%\n\n"
+        )
+        body = banner + _build_review_summary(state, max_chars=max(1000, cfg.review_body_max_characters - len(banner)))
+        payload = PostReviewPayload(
+            commit_id=state["head_commit_sha"],
+            body=body,
+            event=ReviewEvent.COMMENT,
+            comments=[],
+        )
+
+        try:
+            async with GitHubClient(cfg) as client:
+                response = await client.post_pr_review(
+                    repo_full_name=state["repo_full_name"],
+                    pr_number=state["pr_number"],
+                    payload=payload,
+                )
+            github_review_id = response.id
+            logger.info(
+                "post_review | hitl_comment_posted_to_github | review_id=%d url=%s workflow=%s",
+                response.id,
+                response.html_url,
+                state["workflow_id"],
+            )
+        except Exception as post_err:
+            logger.warning(
+                "post_review | hitl_github_post_failed | workflow=%s error=%s | "
+                "item safe in HITL queue, GitHub post skipped",
+                state["workflow_id"],
+                post_err,
+            )
+
         # Persist review to Postgres so GET /api/v1/reviews reflects the completed verdict
         try:
             from backend.database.postgres import get_engine
@@ -849,14 +892,14 @@ async def post_review(state: PRReviewState) -> dict[str, Any]:
                     needs_human_review=state["needs_human_review"],
                     human_review_reason=state["human_review_reason"],
                     findings=state["final_findings"],
-                    github_review_id=None,
+                    github_review_id=github_review_id,
                 )
         except Exception as db_err:
             logger.error("post_review | hitl | postgres_save_failed | %s", db_err)
 
         return {
-            "review_posted": False,
-            "github_review_id": None,
+            "review_posted": github_review_id is not None,
+            "github_review_id": github_review_id,
             "status": ReviewStatus.COMPLETED,
         }
 

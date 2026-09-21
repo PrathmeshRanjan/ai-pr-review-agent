@@ -169,7 +169,7 @@ def run_all_tests():
         from backend.models.enums import ReviewVerdict
 
         event = _verdict_to_review_event(ReviewVerdict.REQUEST_CHANGES)
-        assert event == ReviewEvent.REQUEST_CHANGES, f"Expected REQUEST_CHANGES, got {event}"
+        assert event == ReviewEvent.COMMENT, f"Expected COMMENT, got {event}"
 
         # NEEDS_HUMAN_REVIEW -> COMMENT (does not block merge)
         from backend.models.enums import ReviewVerdict as RV
@@ -398,10 +398,11 @@ def run_all_tests():
 
     assert_test("Postgres failure after GitHub success -> review_posted=True (fault not failure)", test_postgres_failure_does_not_undo_github_post)
 
-    # ─── Test 8: needs_human_review=True -> GitHub never called ───────────────
-    async def test_hitl_path_skips_github():
+    # ─── Test 8: needs_human_review=True -> posts informational comment to GitHub ────────
+    async def test_hitl_path_posts_informational_comment():
         from backend.orchestrator.nodes import post_review
         from backend.models.enums import ReviewVerdict
+        from backend.integrations.github_models import ReviewEvent
 
         state = make_state(
             verdict=ReviewVerdict.NEEDS_HUMAN_REVIEW,
@@ -411,17 +412,19 @@ def run_all_tests():
             human_review_reason="Confidence below threshold (0.45 < 0.70)",
         )
 
-        github_call_count = 0
+        posted_payloads = []
+        mock_response = MagicMock()
+        mock_response.id = 77001
+        mock_response.html_url = "https://github.com/jsmith/payments/pull/42#pullrequestreview-77001"
 
         with patch("backend.orchestrator.nodes.GitHubClient") as MockClient, \
              patch("backend.orchestrator.nodes.get_settings", return_value=make_settings()):
 
             mock_instance = AsyncMock()
 
-            async def track_post(*args, **kwargs):
-                nonlocal github_call_count
-                github_call_count += 1
-                return MagicMock()
+            async def track_post(repo_full_name, pr_number, payload):
+                posted_payloads.append(payload)
+                return mock_response
 
             mock_instance.post_pr_review = track_post
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -430,14 +433,15 @@ def run_all_tests():
 
             result = await post_review(state)
 
-        assert result["review_posted"] is False
-        assert result["github_review_id"] is None
-        assert github_call_count == 0, (
-            f"GitHub should NOT be called when needs_human_review=True. "
-            f"Got {github_call_count} calls."
-        )
+        assert result["review_posted"] is True
+        assert result["github_review_id"] == 77001
+        assert len(posted_payloads) == 1
+        payload = posted_payloads[0]
+        assert payload.event == ReviewEvent.COMMENT
+        assert "Pending Human Verification" in payload.body
+        assert "Confidence below threshold" in payload.body
 
-    assert_test("needs_human_review=True -> GitHub never called, review_posted=False", test_hitl_path_skips_github)
+    assert_test("needs_human_review=True -> posts informational comment with escalation banner", test_hitl_path_posts_informational_comment)
 
     # ─── Test 9: Review summary body has correct content ──────────────────────
     async def test_review_summary_body_content():
