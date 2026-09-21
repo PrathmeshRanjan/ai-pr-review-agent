@@ -195,6 +195,27 @@ This script:
 
 ---
 
+## Triggering Reviews for Real PRs
+
+You can trigger an automated AI review on any active GitHub Pull Request using:
+
+```bash
+docker compose -f docker-compose.dev.yml exec api python3 scripts/trigger-pr-review.py <owner/repo> <pr_number>
+```
+
+**Example:**
+```bash
+docker compose -f docker-compose.dev.yml exec api python3 scripts/trigger-pr-review.py PrathmeshRanjan/ai-pr-review-agent 1
+```
+
+This will:
+1. Fetch the real PR metadata, diff, and files from GitHub via GitHub REST API.
+2. Query vector memory for relevant repository code context.
+3. Run the 4 specialist AI agents (Security, Quality, Test, Docs) in parallel.
+4. Aggregate findings and output the final verdict.
+
+---
+
 ## 20-Phase Build Roadmap
 
 Each phase is one chapter in the course. Ends green. Has a written gate before the next phase starts. Tiger Cloud is load-bearing in 5 phases.
