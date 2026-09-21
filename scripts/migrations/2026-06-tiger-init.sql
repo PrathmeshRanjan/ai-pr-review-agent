@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS code_chunks (
     symbol       TEXT,                          -- function/class name (nullable)
     chunk_index  INT          NOT NULL,         -- order within file (for context stitching)
     content      TEXT         NOT NULL,
-    embedding    VECTOR(256)  NOT NULL,         -- text-embedding-3-large, 256 dims
+    embedding    VECTOR(768)  NOT NULL,         -- gemini-embedding-001, 768 dims
     token_count  INT,
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );

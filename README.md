@@ -164,12 +164,34 @@ Architecture decision record: `docs/adr/ADR-003-tiger-cloud-data-layer.md`
 ## Local Development
 
 ```bash
-cp .env.example .env          # fill in TIGER_DATABASE_URL, GITHUB_TOKEN, OPENAI_API_KEY
+cp .env.example .env          # fill in DATABASE_URL, GITHUB_TOKEN, MISTRAL_API_KEY, GOOGLE_API_KEY
 docker compose up             # starts Redis + API + Worker
 ```
 
 The API will be available at `http://localhost:8000`.
 Health check: `GET /health`
+Interactive API Docs (Swagger): `http://localhost:8000/docs`
+
+---
+
+## Repository Pre-Indexing (RAG Bootstrap)
+
+By default, repository source files are indexed automatically in the background after the first PR review completes. If you want the **very first PR review** on a repository to have immediate codebase RAG context, you can pre-index it beforehand:
+
+```bash
+python3 scripts/index-repo.py <owner/repo>
+```
+
+**Example:**
+```bash
+python3 scripts/index-repo.py octocat/Hello-World
+```
+
+This script:
+1. Scans the target GitHub repository for source code files (`.py`, `.ts`, `.go`, etc.).
+2. Generates semantic embeddings using Google's `gemini-embedding-001`.
+3. Upserts code chunks into the `code_chunks` table in PostgreSQL with pgvector DiskANN indexing.
+4. Subsequent reviews on this repository will instantly retrieve relevant prior code context.
 
 ---
 
