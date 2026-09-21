@@ -113,6 +113,14 @@ class WorkflowNotFoundError(WorkflowError):
     pass
 
 
+class SecurityThreatBlockedError(PRReviewAgentError):
+    """
+    Raised when the pre-agent security gate detects a critical threat or prompt injection
+    that requires blocking review execution before agents can run.
+    """
+    pass
+
+
 # -----------------------------------------------------------------------------
 # Agent Exceptions
 # -----------------------------------------------------------------------------

@@ -112,6 +112,9 @@ class LangGraphEngine(WorkflowEngine):
             # Capture threshold at workflow start so a settings change
             # mid-run doesn't affect an in-progress review
             confidence_threshold=cfg.confidence_threshold,
+
+            # Input security gate threat assessment
+            threat_assessment={},
         )
 
     def _state_to_result(
@@ -171,6 +174,7 @@ class LangGraphEngine(WorkflowEngine):
                 "needs_human_review": final_state.get("needs_human_review", False),
                 "human_review_reason": final_state.get("human_review_reason", ""),
                 "github_review_id": final_state.get("github_review_id"),
+                "threat_assessment": final_state.get("threat_assessment", {}),
             },
         )
 

@@ -47,11 +47,13 @@ import time
 from typing import Any
 
 from backend.config import get_settings
+from backend.core.exceptions import SecurityThreatBlockedError
 from backend.integrations.github_client import GitHubClient, GitHubAPIError, GitHubNotFoundError, GitHubRateLimitError
 from backend.integrations.github_models import PostReviewPayload, ReviewEvent, ReviewComment
 from backend.memory.context_retriever import retrieve_context_for_diff
 from backend.models.enums import FindingSeverity, ReviewStatus, ReviewVerdict
 from backend.orchestrator.state import AgentResultState, PRReviewState
+from backend.security.threat_model import RecommendedAction, assess_pr_diff
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +178,46 @@ async def build_context(state: PRReviewState) -> dict[str, Any]:
             )
 
     # -------------------------------------------------------------------------
+    # Step 3.5: Pre-Agent Input Security Gate (assess_pr_diff)
+    #
+    # WIKI: Financial-Security-Controls / Production-Hardening:
+    # "Guards on the input side. Guards on the output side. Each guardrail
+    # is independent. Each can block."
+    # Evaluates prompt injection, secrets, PII, and oversized payload.
+    # Replaces raw diff with sanitized/redacted diff to prevent leakage to
+    # RAG vector store and specialist LLM agents.
+    # Blocks critical injection or payload attacks before execution begins.
+    # -------------------------------------------------------------------------
+    assessment = assess_pr_diff(
+        title=metadata.title,
+        body=metadata.body,
+        diff=pr_diff,
+    )
+
+    logger.info(
+        "build_context | threat_assessment | workflow_id=%s severity=%s action=%s scores=%d",
+        state["workflow_id"],
+        assessment.overall_severity,
+        assessment.recommended_action,
+        len(assessment.scores),
+    )
+
+    if assessment.recommended_action == RecommendedAction.BLOCK:
+        logger.error(
+            "build_context | security_threat_blocked | workflow_id=%s severity=%s",
+            state["workflow_id"],
+            assessment.overall_severity,
+        )
+        raise SecurityThreatBlockedError(
+            f"PR review blocked by pre-agent security gate: {assessment.overall_severity} threat detected "
+            f"({', '.join(s.vector for s in assessment.scores)})."
+        )
+
+    # Sanitize diff for RAG and downstream agent consumption
+    if assessment.redacted_diff:
+        pr_diff = assessment.redacted_diff
+
+    # -------------------------------------------------------------------------
     # Step 4: RAG context retrieval.
     #
     # WIKI: RAG-Architecture.md
@@ -215,6 +257,8 @@ async def build_context(state: PRReviewState) -> dict[str, Any]:
         "pr_diff": pr_diff,
         "changed_files": [f.filename for f in pr_files],
         "retrieved_context": retrieved_context,
+        # Input security gate assessment
+        "threat_assessment": assessment.to_audit_dict(),
         # Metadata fields — now populated from the real GitHub API
         # (previously these were set by the orchestrator engine stub)
         "pr_title": metadata.title,

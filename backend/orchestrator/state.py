@@ -291,3 +291,12 @@ class PRReviewState(TypedDict):
     #   Empty retrieved_context is VALID. The pipeline runs correctly with diff only.
     #   No node should fail or block if this field is "".
     retrieved_context: str
+
+    # -------------------------------------------------------------------------
+    # Input Security Gate (Phase 11 — Threat Model)
+    # -------------------------------------------------------------------------
+    # Structured threat assessment result (scores, recommended_action, overall_severity).
+    # WRITTEN BY: build_context node
+    # READ BY: audit log, trace viewer
+    threat_assessment: dict[str, Any]
+
