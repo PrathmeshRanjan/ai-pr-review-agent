@@ -195,60 +195,45 @@ This will:
 
 ---
 
+---
+
 ## Publishing Reviews to GitHub: Architecture & Approaches
 
 Whenever a pull request is opened or updated in your repository, the agent evaluates the changes and publishes a structured review comment on the PR thread.
 
-We have implemented **two complementary production approaches**, tailored for different operational needs:
+### The Approach Taken: Real-Time Webhook Server + Option B Transparent HITL
+
+Our core production architecture uses an always-on webhook service backed by PostgreSQL (`pgvector`) and Redis.
 
 ```
-                  ┌─────────────────────────────────────────────────────────────┐
-                  │                 Pull Request Created / Updated              │
-                  └──────────────────────────────┬──────────────────────────────┘
-                                                 │
-                   ┌─────────────────────────────┴─────────────────────────────┐
-                   ▼                                                           ▼
-       [Approach 1: Webhook Server]                               [Approach 2: Serverless Actions]
-  FastAPI Ingress -> Redis / ARQ Worker                         GitHub Actions Runner (CI Container)
-           │                                                                   │
-           ▼                                                                   ▼
- LangGraph Orchestrator (4 Agents)                           scripts/run-action-review.py (4 Agents)
-           │                                                                   │
-           ├─────────────────────────────┐                                     │
-           ▼                             ▼                                     │
-    [High Confidence]           [HITL Escalation]                              │
-  Post Review Comment         Post Informational Review                        │
-  & Complete Record           with Escalation Banner                           │
-           │                             │                                     │
-           └─────────────────────────────┴─────────────────────────────────────┘
-                                         │
-                                         ▼
-                      GitHub PR Comment + Step Summary Published
+GitHub PR Webhook
+       │
+       ▼
+FastAPI Ingress (HMAC signature verification + Redis idempotency lock)
+       │
+       ▼
+ARQ Background Worker (LangGraph Multi-Agent Orchestrator)
+       │
+       ├───> Qdrant / pgvector (Fetches codebase semantic context)
+       ├───> Parallel Specialist Agents (Security, Quality, Test, Docs)
+       │
+       ▼
+Safety-Threshold Aggregator & Arbitrator
+       │
+       ├───> [Confidence ≥ 0.70] ──> Post PR Review Comment (APPROVE / COMMENT)
+       │
+       └───> [Confidence < 0.70 / Critical Flags] ──> Option B:
+                 ├── Enqueue to Postgres/Redis Human-in-the-Loop (HITL) Queue
+                 └── Immediately publish transparent informational review on PR
+                     with escalation banner: `[!WARNING] AI Review — Pending Human Verification`
 ```
 
----
+#### Why We Took This Approach:
+1. **Full Codebase Semantic Memory**: The persistent PostgreSQL database with `pgvector` stores chunked code and embeddings from `scripts/index-repo.py`. Specialist agents can understand cross-file dependencies and repository conventions rather than evaluating the diff in isolation.
+2. **Transparent Immediate Feedback (Option B)**: Even when a review contains safety-critical edge cases that route it to the Human-In-The-Loop approval queue, a review comment is **immediately published to the PR** with an escalation banner (`[!WARNING] AI Review — Pending Human Verification`). The author receives instant feedback without human latency.
+3. **Audit Trail & Telemetry**: Every agent action, token spend, and decision is recorded in the `agent_events` table for continuous learning and analytics.
 
-### Approach 1 (Implemented): Real-Time Webhook Server + Option B Transparent HITL
-
-This is the primary production architecture for organizations running an always-on review service with PostgreSQL and Redis.
-
-#### How It Works:
-1. **Webhook Ingress**: GitHub fires a `pull_request` webhook (`opened`, `synchronize`, `reopened`) to `POST /api/v1/webhook/github`.
-2. **HMAC Signature Verification & Idempotency**: Fast validation (<50ms) using `X-Hub-Signature-256` and Redis idempotency locks.
-3. **Asynchronous Dispatch**: The webhook responds with `200 OK` immediately and enqueues a background job in Redis via ARQ.
-4. **Parallel Agent Execution**: The LangGraph worker runs 4 specialist sub-agents (Security, Quality, Test Coverage, Docs) in parallel over the diff and retrieved semantic context.
-5. **Option B (Transparent HITL Review Publishing)**:
-   - If findings meet the confidence threshold (`≥ 0.70`), the agent posts a GitHub Pull Request Review comment (`ReviewEvent.COMMENT` or `ReviewEvent.APPROVE`).
-   - If findings require human sign-off (confidence `< 0.70` or safety-threshold rule triggered by multiple high-severity flags), it enqueues the item to the **Human-In-The-Loop (HITL) approval queue** in PostgreSQL/Redis **AND immediately publishes an informational review comment to the GitHub PR** with a prominent escalation banner:
-     ```markdown
-     > [!WARNING]
-     > **AI Review — Pending Human Verification**
-     > This review detected items requiring human sign-off before merge.
-     > **Reason:** Confidence threshold / Safety-threshold rule
-     ```
-   - **Why Option B?** The developer receives instant transparent feedback on their code changes rather than waiting in silence, while reviewers are clearly warned that human sign-off is pending.
-
-#### Webhook Setup Guide:
+#### Setup Guide:
 1. Deploy the backend API (e.g. on Railway, AWS, or local with `docker compose`).
 2. If testing locally, start a tunnel: `ngrok http 8000`.
 3. In your GitHub Repository, go to **Settings > Webhooks > Add webhook**:
@@ -260,47 +245,17 @@ This is the primary production architecture for organizations running an always-
 
 ---
 
-### Approach 2 (Implemented): Serverless CI/CD via GitHub Actions
+### Comparative Analysis: Other Possible Approaches Considered
 
-For lightweight repositories or teams that want zero hosting overhead, we also implemented a **serverless GitHub Actions runner** (`scripts/run-action-review.py` and `.github/workflows/pr-review.yml`).
+During architectural planning, several other approaches were evaluated:
 
-#### How It Works:
-1. Runs directly within the ephemeral GitHub Actions CI runner on every PR event.
-2. No 24/7 web server, no webhook URL, no ngrok tunnel, and no database infrastructure required.
-3. Uses the built-in `GITHUB_TOKEN` provided by the Actions environment to fetch diffs and post review comments.
-4. Features:
-   - **Pre-Flight Threat Gate**: Calls `assess_pr_diff` to detect and block prompt injection attacks, leaked credentials, and PII.
-   - **Multi-Agent Specialist Pipeline**: Runs Security, Quality, Test, and Docs agents using Mistral AI or Google Gemini.
-   - **Dual Output**: Posts the review comment directly onto the PR thread and simultaneously publishes an executive report to the GitHub Actions Job Summary (`$GITHUB_STEP_SUMMARY`).
-
-#### GitHub Actions Setup Guide:
-1. Ensure `.github/workflows/pr-review.yml` is present in your repository.
-2. In your repository on GitHub, go to **Settings > Secrets and variables > Actions**:
-   - Add `GEMINI_API_KEY` (or `MISTRAL_API_KEY`).
-3. Go to **Settings > Actions > General > Workflow permissions**:
-   - Select **Read and write permissions** (allows the runner to publish PR comments).
-4. Any new PR or commit will now automatically receive an AI code review comment.
-
-#### Local / Dry-Run Testing:
-You can test the serverless runner locally without sending comments to GitHub:
-```bash
-python3 scripts/run-action-review.py --event-path fixtures/sample_pr_opened.json --dry-run
-```
-
----
-
-### Comparative Analysis: Other Possible Approaches & Trade-Offs
-
-When designing an AI PR review system, several architectural patterns exist. Below is a comparative trade-off analysis of the options considered:
-
-| Approach | Latency | Infrastructure Cost | False-Positive Protection | Setup Complexity | Best Suited For |
-|---|---|---|---|---|---|
-| **Approach 1: Webhook Server + Option B (Implemented)** | **Fast** (~5–15s async) | Low-Medium (Server, Postgres, Redis) | **High** (HITL banner + verification dashboard) | Medium (Requires public webhook URL) | Production teams needing persistent audit trails, continuous learning, and human triage. |
-| **Approach 2: Serverless GitHub Actions (Implemented)** | **Medium** (CI queue time + 10s) | **Zero** (Runs entirely on GitHub free runner minutes) | Medium (Automated safety thresholds) | **Minimal** (1 YAML workflow file + 1 secret) | Open source repos, individual developers, and projects with no dedicated server. |
-| **Option A: Strict Silent HITL (Alternative)** | **Slow** (Human bottleneck) | Low-Medium | **Maximum** (Zero unverified comments reach PR) | Medium | Strict regulatory or compliance environments where unverified AI comments are prohibited. |
-| **GitHub App with Checks API & Diff Annotations (Alternative)** | Fast (~5–15s) | Low-Medium | High | **High** (Requires creating a GitHub App, private key, JWT rotation, and diff hunk parsing) | Large enterprise teams wanting native in-diff line comments and required status checks. |
-| **Scheduled Polling Bot (Alternative)** | **Very Slow** (Cron interval, e.g. 5–15 min) | Low | Low | Minimal | Legacy environments where webhooks cannot reach the network and CI is unavailable. |
-| **ChatOps / Slash-Command `/review` (Alternative)** | On-demand (User triggered) | Low | High (Only runs when requested) | Medium | Repositories with high PR volume seeking to minimize token usage and avoid unsolicited comments. |
+| Approach | Infrastructure | Vector Memory (RAG) | HITL Feedback | Why We Did Not Select It |
+|---|---|---|---|---|
+| **Serverless GitHub Actions** | Zero-server (Cloud CI) | ❌ Unavailable (Ephemeral runners lack persistent pgvector DB) | Automated threshold only | Discarded: CI runners are destroyed after each run, meaning repository-wide semantic memory and vector indexing cannot be retained locally without an external paid vector DB. |
+| **Option A: Strict Silent HITL** | Server + Postgres + Redis | ✅ Yes | ❌ Blocked until human approval | Discarded: Authors receive zero feedback until a human operator signs off on the dashboard, creating an engineering bottleneck. |
+| **GitHub App with Checks API & In-Diff Annotations** | Server + GitHub App | ✅ Yes | ✅ Yes | Discarded: Higher integration complexity (managing private `.pem` keys, JWT authentication, and diff hunk offset calculations) without significant benefit over PR review comments. |
+| **Scheduled Polling Bot** | Scheduled Cron Script | ✅ Yes | ❌ Delayed | Discarded: High latency (5–15 min poll delay) and quickly consumes GitHub API hourly rate limit quotas. |
+| **ChatOps / Slash-Command (`/review`)** | Server + Webhook | ✅ Yes | Manual trigger | Viable alternative for repos wanting on-demand reviews, but less seamless than automatic review on PR creation. |
 
 ---
 
