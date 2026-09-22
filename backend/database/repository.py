@@ -170,8 +170,22 @@ async def save_review(
     # Step 3: Write everything in one atomic transaction
     # (From Storage-Engines.md wiki: "writes that span multiple tables must be atomic")
     async with session.begin():
-        session.add(review)
-        session.add_all(finding_records)
+        existing = await session.get(PRReviewRecord, review_id)
+        if existing:
+            existing.verdict = verdict
+            existing.status = status
+            existing.overall_confidence = overall_confidence
+            existing.needs_human_review = 1 if needs_human_review else 0
+            existing.human_review_reason = human_review_reason
+            existing.github_review_id = github_review_id
+            existing.updated_at = now
+            from sqlalchemy import delete
+            await session.execute(delete(FindingRecord).where(FindingRecord.review_id == review_id))
+            session.add_all(finding_records)
+            review = existing
+        else:
+            session.add(review)
+            session.add_all(finding_records)
         # flush() forces SQL INSERT statements to execute within the transaction,
         # making IDs and constraints available for validation before commit.
         await session.flush()
