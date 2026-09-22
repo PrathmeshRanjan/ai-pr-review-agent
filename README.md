@@ -1,328 +1,282 @@
-# AI PR Review Agent
+# AI Pull Request Review Agent
 
-A production-grade, open source AI Pull Request Review Agent. A developer opens a PR. A webhook fires. Four specialist sub-agents run in parallel — security, code quality, test coverage, docs. Each one reasons over the diff plus codebase context retrieved via semantic search. An aggregator merges findings into a single structured review and posts it back to the PR. Low-confidence findings route to a human approval queue.
+An automated code review system built as a multi-agent pipeline. When a pull request event arrives via GitHub webhook, the system fans out analysis across four specialized sub-agents running in parallel: security, code quality, test coverage, and documentation. Each agent reasons over the diff together with repository context retrieved via semantic vector search. An arbitration layer aggregates agent findings using confidence-weighted voting, enforces safety thresholds, and publishes structured review comments directly to the pull request.
 
-Every phase has a gate: tests pass, evals pass, a written checkpoint before the next phase begins.
-
----
-
-## What It Does
-
-- Receives a GitHub PR webhook
-- Runs 4 parallel specialist sub-agents: security, quality, test coverage, docs
-- Each agent reasons about its domain using the PR diff + codebase context (RAG via pgvectorscale)
-- Posts structured review comments back to the GitHub PR
-- Routes low-confidence findings to a human approval queue (HITL)
-- Every agent action, LLM call, and decision is recorded in an events table
-- Real-time cost and latency dashboards powered by continuous aggregates
-- Learns from merged vs rejected reviews over time
+The architecture is based on the design outlined in the study [Designing an AI Pull-Request Review Agent](https://www.antern.co/blogs/production-grade-ai-pr-review-agent/) by Ayush Singh (Antern). This implementation materializes the core principles of that study: specialist domain reasoners, grounded codebase memory, a unified PostgreSQL data spine, financial guardrails, and human oversight.
 
 ---
 
-## Data Layer — PostgreSQL (pgvector)
+## Architectural Highlights
 
-Most AI projects end up juggling three separate stores: a vector DB for RAG, a time-series store for traces, and Postgres for structured data. This project uses PostgreSQL with the `pgvector` extension to collapse all three into one database.
+- **Parallel Specialist Reasoners**: Deconstructs code review into four independent domain analyzers (Security, Code Quality, Test Coverage, Documentation) instead of relying on a monolithic prompt.
+- **Unified PostgreSQL Data Layer**: Consolidates relational data, semantic embeddings (`pgvector` DiskANN/HNSW), and time-series operational telemetry (`timescaledb` hypertables) into a single database engine.
+- **RAG Codebase Grounding**: Indexes repository source code to inject cross-file dependencies and existing conventions into agent context windows, preventing diff evaluation in isolation.
+- **Transparent Human-in-the-Loop (HITL)**: When agent confidence drops below threshold or critical security flags are raised, the system records the review in a triage queue while immediately publishing an informational advisory comment on the pull request with a human verification warning banner.
+- **Deterministic Sandboxing**: Validates syntax and AST integrity inside a restricted subprocess execution environment with command allowlists and byte caps, keeping untrusted code away from host runtimes.
+- **Financial Controls (FinOps)**: Hard daily spend limits via `BudgetGuard`, token attribution per agent/model, and complexity-tiered routing recommendations to prevent cost runaways.
+- **Reliability & Idempotency**: Distributed Redis locks prevent duplicate review runs from webhook retries; circuit breakers prevent cascading failures when external LLM providers degrade.
 
-One connection pool. One backup policy. One place to reason about the data.
+---
 
-### Three roles, one database
+## Architecture Overview
 
-| Layer | Feature | What it does |
+```
+GitHub Pull Request Webhook
+            │
+            ▼
+FastAPI Ingress (HMAC SHA-256 Signature Verification + Redis Distributed Lock)
+            │
+            ▼ Enqueue Review Job
+ARQ Background Worker Pool
+            │
+            ▼ LangGraph Multi-Agent Orchestrator
+  ┌─────────────────────────────────────────────────────────┐
+  │ 1. Context Retrieval (pgvector semantic search)         │
+  │ 2. Security Screening Gate (Threat model assessment)    │
+  │ 3. Parallel Fan-Out Analysis:                           │
+  │    ├── Security Agent (Secrets pattern check, OWASP/CWE)│
+  │    ├── Quality Agent (Cyclomatic complexity, diff size) │
+  │    ├── Test Coverage Agent (Edge cases, regressions)    │
+  │    └── Docs Agent (Docstrings, API contract changes)    │
+  │ 4. Arbitration & Confidence-Weighted Voting             │
+  └─────────────────────────────────────────────────────────┘
+            │
+            ├─── Confidence >= 0.70 & No Critical Block
+            │    └── Post Review Comment to GitHub PR (APPROVE / COMMENT)
+            │
+            └─── Confidence < 0.70 OR Critical Flags (Option B Transparent HITL)
+                 ├── Enqueue to Postgres + Redis HITL Review Queue
+                 └── Post Advisory Review to GitHub PR with Warning Banner
+            │
+            ▼
+Persistence & Telemetry (PostgreSQL: code_chunks, reviews, agent_events, llm_call_logs)
+```
+
+---
+
+## System Components
+
+### 1. Webhook Ingress & Idempotency
+- **Endpoint**: `POST /webhook/github`
+- Validates the `X-Hub-Signature-256` HMAC signature against `GITHUB_WEBHOOK_SECRET`.
+- Acquires an atomic lock in Redis (`lock:webhook:{delivery_id}`) with a 5-minute TTL to ensure duplicate webhook deliveries are acknowledged with HTTP 200 without duplicate execution.
+- Dispatches review jobs to the ARQ worker queue.
+
+### 2. Orchestration & Specialist Agents
+Built with LangGraph to maintain an explicit, typed state machine across execution stages:
+- **Security Agent**: Uses deterministic regular expressions (`_SECRET_PATTERNS`) for literal credentials and API keys, followed by model reasoning for SQL injection, cross-site scripting, authorization flaws, and insecure dependencies.
+- **Quality Agent**: Evaluates structural maintainability, cyclomatic complexity, code modularity, and adherence to repository styling patterns. Enforces maximum diff size boundaries (500 KB limit).
+- **Test Agent**: Detects missing test coverage for newly introduced branches, identifies unhandled edge cases, and checks test suite regression exposure.
+- **Docs Agent**: Checks whether exported symbols, public APIs, schemas, and environment variables are documented. Flags docstring drift.
+
+### 3. Arbitration Engine & Safety Rules
+The aggregator merges individual agent findings using the following policies:
+- **Confidence-Weighted Voting**: The aggregate score is a weighted mean across successful agents.
+- **Safety-Threshold Rule**: Disagreements trigger explicit escalation. If the Security agent fails or 3 or more agents flag critical findings, the system overrides optimistic verdicts and marks the review for human inspection.
+- **Option B Transparent Publishing**: Instead of silently dropping reviews or waiting for human triage, the system immediately posts a review comment to the GitHub pull request containing all findings and an escalation notice (`[!WARNING] AI Review — Pending Human Verification`). The author receives rapid feedback, and human reviewers can approve or dismiss the review via the HITL API.
+
+### 4. Data Layer (PostgreSQL with pgvector)
+A single database handles three operational workloads:
+- **Semantic Memory (`code_chunks`)**: Stores chunked repository files and vector embeddings generated by `gemini-embedding-001`. Indexed via DiskANN / HNSW for sub-10ms nearest-neighbor retrieval.
+- **Operational Data (`reviews`, `hitl_reviews`, `hitl_feedback`)**: Tracks review status, findings snapshots, human verdicts, and feedback signals for continuous evaluation.
+- **Events Spine (`agent_events`, `llm_call_logs`)**: Records every span, token count, latency measurement, and execution cost. Continuous aggregates compute real-time p95 latency and spend rollups.
+
+### 5. Execution Sandbox & Security Gate
+- **Subprocess Sandbox**: Isolated execution wrapper used for syntax checks (`python3 -c compile(...)` and `node --check`). Configured with timeouts (default 5s), output truncation (10 KB limit), and strict command allowlisting. Disallows shell execution (`shell=False`).
+- **Threat Model Gate**: Assesses incoming diffs for prompt injection patterns, indirect jailbreaks, and sensitive data leakage before prompt assembly.
+
+### 6. Financial Guardrails (LLM FinOps)
+- **BudgetGuard**: Enforces a strict daily spend threshold (default $50.00/day). If spend exceeds the cap, incoming reviews gracefully degrade to an informational status and route directly to the human queue rather than incurring unbounded API costs.
+- **Cost Attribution**: Records input tokens, output tokens, and dollar costs per call in `llm_call_logs`, grouped by workflow ID and agent type.
+- **Routing Advisor**: Compares current execution against cheaper model tiers to compute opportunity cost metrics for dashboard reporting.
+
+---
+
+## Live Verification on GitHub
+
+A pull request review generated by this system is published on GitHub:
+
+Review Link: [Pull Request #2 Review](https://github.com/PrathmeshRanjan/ai-pr-review-agent/pull/2#pullrequestreview-5274961023)
+
+Key elements displayed in the review:
+- Transparent Option B escalation notice (`[!WARNING] AI Review — Pending Human Verification`).
+- Line-level recommendations for currency validation, numeric boundary checks, and error handling.
+- Workflow execution ID, per-agent confidence breakdown, and timestamp audit trail.
+
+---
+
+## Architecture Comparison
+
+| Architectural Approach | Vector Memory (RAG) | HITL Feedback Loop | Infrastructure Footprint | Tradeoff |
+|---|---|---|---|---|
+| **Webhook Service + Option B (This Implementation)** | Persistent pgvector store | Immediate PR advisory + async human review queue | Docker stack (API + Worker + Postgres + Redis) | Requires hosted or containerized service; delivers lowest feedback latency and highest auditability. |
+| **Serverless GitHub Actions** | None (ephemeral runner storage) | Automated threshold only | Zero server infrastructure | Discarded: Cannot maintain persistent local vector indexes across runs without paying for external managed vector databases. |
+| **Strict Silent HITL (Option A)** | Persistent pgvector store | Blocked until human sign-off | Server + Postgres + Redis | Discarded: Review comments are withheld until an operator logs into a dashboard, creating team bottlenecks. |
+| **GitHub App with Checks API** | Persistent pgvector store | Checks API annotations | Server + GitHub App keys | Discarded: Increases setup complexity (private key rotations, diff hunk coordinate mapping) without user experience gains over PR comments. |
+| **Scheduled Polling Script** | Persistent pgvector store | Delayed | Periodic cron runner | Discarded: Polling interval adds 5-15 minute latency and consumes GitHub API rate limit budgets. |
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Function |
 |---|---|---|
-| Semantic memory | pgvector (DiskANN / HNSW) | Stores chunked code, ADRs, and prior reviews. 4 specialist agents query it for context on every PR. Replaces external vector databases entirely. |
-| Agent events | Time-series events | Every span, LLM call, tool call, and decision lands in one time-ordered table: `agent_events`. Powers the trace viewer, audit trail, and cost ledger. |
-| Live dashboards | Continuous aggregates | Real-time rollups for cost per PR, p95 latency per agent, rejection rate. Materialized so the dashboard stays fast as history grows. |
-| Cost control | Events + aggregates | Token cost attribution per agent span. Budget caps read from the same aggregate the dashboard does. |
-
-### Schema sketch
-
-```sql
--- The events spine — every agent action as a time-ordered row
-CREATE TABLE agent_events (
-  ts          TIMESTAMPTZ NOT NULL,
-  review_id   UUID        NOT NULL,
-  agent       TEXT        NOT NULL,   -- security | quality | tests | docs
-  event_type  TEXT        NOT NULL,   -- span.start | llm.call | tool.call | decision
-  model       TEXT,
-  tokens_in   INT,
-  tokens_out  INT,
-  cost_usd    NUMERIC(10,6),
-  latency_ms  INT,
-  outcome     TEXT,
-  payload     JSONB
-);
-
-SELECT create_hypertable('agent_events', 'ts', chunk_time_interval => INTERVAL '1 day');
-
--- Continuous aggregate: per-agent cost and latency, refreshed every minute
-CREATE MATERIALIZED VIEW agent_health_1m
-WITH (timescaledb.continuous) AS
-SELECT
-  time_bucket('1 minute', ts)    AS bucket,
-  agent,
-  sum(cost_usd)                  AS cost_usd,
-  approx_percentile(0.95, percentile_agg(latency_ms)) AS p95_ms
-FROM agent_events
-GROUP BY bucket, agent;
-
--- Semantic memory with pgvectorscale DiskANN
-CREATE TABLE code_chunks (
-  id        UUID PRIMARY KEY,
-  repo      TEXT NOT NULL,
-  path      TEXT NOT NULL,
-  content   TEXT NOT NULL,
-  embedding VECTOR(1536) NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX code_chunks_emb_idx ON code_chunks
-  USING diskann (embedding vector_cosine_ops);
-```
+| Runtime | Docker (Multi-Container) | Containerized local execution |
+| Web Framework | FastAPI (Python 3.10) | Webhook receiver and management REST API |
+| Orchestrator | LangGraph | State machine, parallel fan-out, arbitration |
+| Job Queue | ARQ + Redis | Asynchronous distributed worker pool |
+| Database | PostgreSQL 16 (`pgvector`) | Relational persistence + vector search |
+| Auxiliary Vector Store | Qdrant | Secondary vector indexing client |
+| Primary LLM | Mistral (`mistral-small-latest`) | Agent code reasoning and finding generation |
+| Fallback LLM | Google Gemini (`gemini-2.5-flash`) | Provider failover target |
+| Embeddings | Google Gemini (`gemini-embedding-001`)| Vector embeddings for codebase chunks |
+| Observability | OpenTelemetry + JSONL Audit Log | Trace spans and immutable decision records |
 
 ---
 
-## Stack
+## Getting Started
 
-| Layer | Technology |
-|---|---|
-| Backend | FastAPI (Python 3.10) |
-| Orchestration | LangGraph (parallel fan-out, checkpointing) |
-| Job Queue | Redis + ARQ |
-| Memory | PostgreSQL (pgvector DiskANN / HNSW) |
-| LLM | Mistral (mistral-small-latest) + Google Gemini (gemini-2.5-flash fallback) |
-| Embeddings | Google Gemini (gemini-embedding-001) |
-| Sandbox | Docker (isolated code execution) |
-| Frontend | Next.js (review dashboard, HITL queue, trace viewer) |
-| Observability | OpenTelemetry + events table |
-| Runtime | Docker (Local Multi-Container Stack) |
+### Prerequisites
+- Docker and Docker Compose
+- GitHub account and a repository where you have admin/write permissions
+- Mistral API key (primary model)
+- Google Gemini API key (embeddings and fallback model)
+- ngrok (for tunneling GitHub webhooks to your local machine)
 
----
-
-## Architecture
-
-```
-GitHub PR webhook
-       |
-       v
-FastAPI ingress  (idempotency key + HMAC)
-       |
-       v  enqueue(review_job)
-ARQ Worker - LangGraph orchestrator
-       |
-       +---> security_agent
-       +---> quality_agent
-       +---> tests_agent
-       +---> docs_agent
-                |
-                v
-         aggregator --> HITL?
-                |
-                v
-         post_to_github
-       |         |         |
-       v         v         v
-   pgvector   events     continuous
-   vector     table      aggregates
-   memory     (events)   (dashboard)
-```
-
-Modular monolith. One FastAPI service, 11 internal modules. See `docs/adr/ADR-002-architecture-style.md`.
-
----
-
-## Database Setup
-
-Run the idempotent schema migration against your PostgreSQL database:
+### 1. Configuration
+Create a `.env` file from the provided template:
 
 ```bash
-psql $DATABASE_URL < scripts/migrations/2026-06-vector-init.sql
+cp .env.example .env
 ```
+
+Set the required environment variables:
+```ini
+GITHUB_WEBHOOK_SECRET=your_generated_webhook_secret
+GITHUB_TOKEN=your_github_personal_access_token
+MISTRAL_API_KEY=your_mistral_api_key
+GOOGLE_API_KEY=your_google_gemini_api_key
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/pr_review_agent
+REDIS_URL=redis://localhost:6379
+API_KEY=your_internal_api_key
+```
+
+### 2. Start the Stack
+Start the containers using Docker Compose:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+Verify service health:
+```bash
+curl http://localhost:8001/health
+```
+
+The interactive API documentation is available at `http://localhost:8001/docs`.
+
+### 3. Expose Webhook via ngrok
+Expose the FastAPI ingress port to the internet:
+
+```bash
+ngrok http 8001
+```
+
+Copy the forwarding URL (e.g. `https://your-subdomain.ngrok-free.app`).
+
+### 4. Configure GitHub Repository Webhook
+In your target repository, navigate to **Settings > Webhooks > Add webhook**:
+- **Payload URL**: `https://your-subdomain.ngrok-free.app/webhook/github`
+- **Content type**: `application/json`
+- **Secret**: The value assigned to `GITHUB_WEBHOOK_SECRET` in `.env`
+- **Events**: Select **Let me select individual events** -> check **Pull requests**.
 
 ---
 
-## Local Development
+## Usage & Operations
+
+### Pre-Indexing a Codebase for RAG
+To bootstrap semantic memory for a repository before reviewing PRs:
 
 ```bash
-cp .env.example .env          # fill in DATABASE_URL, GITHUB_TOKEN, MISTRAL_API_KEY, GOOGLE_API_KEY
-docker compose up             # starts Redis + API + Worker
+docker compose -f docker-compose.dev.yml exec api python3 scripts/index-repo.py <owner/repo>
 ```
 
-The API will be available at `http://localhost:8000`.
-Health check: `GET /health`
-Interactive API Docs (Swagger): `http://localhost:8000/docs`
+This scans repository files, computes vector embeddings, and stores them in PostgreSQL with pgvector indexes.
 
----
-
-## Repository Pre-Indexing (RAG Bootstrap)
-
-By default, repository source files are indexed automatically in the background after the first PR review completes. If you want the **very first PR review** on a repository to have immediate codebase RAG context, you can pre-index it beforehand:
-
-```bash
-python3 scripts/index-repo.py <owner/repo>
-```
-
-**Example:**
-```bash
-python3 scripts/index-repo.py octocat/Hello-World
-```
-
-This script:
-1. Scans the target GitHub repository for source code files (`.py`, `.ts`, `.go`, etc.).
-2. Generates semantic embeddings using Google's `gemini-embedding-001`.
-3. Upserts code chunks into the `code_chunks` table in PostgreSQL with pgvector DiskANN indexing.
-4. Subsequent reviews on this repository will instantly retrieve relevant prior code context.
-
----
-
-## Triggering Reviews for Real PRs
-
-You can trigger an automated AI review on any active GitHub Pull Request using:
+### Manual PR Review Trigger
+You can also trigger an automated review on any open pull request via CLI:
 
 ```bash
 docker compose -f docker-compose.dev.yml exec api python3 scripts/trigger-pr-review.py <owner/repo> <pr_number>
 ```
 
-**Example:**
+### Review Queue & HITL Operations
+List items awaiting human review:
 ```bash
-docker compose -f docker-compose.dev.yml exec api python3 scripts/trigger-pr-review.py PrathmeshRanjan/ai-pr-review-agent 1
+curl -H "X-API-Key: your_internal_api_key" http://localhost:8001/api/v1/hitl/queue
 ```
 
-This will:
-1. Fetch the real PR metadata, diff, and files from GitHub via GitHub REST API.
-2. Query vector memory for relevant repository code context.
-3. Run the 4 specialist AI agents (Security, Quality, Test, Docs) in parallel.
-4. Aggregate findings and output the final verdict.
-
----
-
----
-
-## Publishing Reviews to GitHub: Architecture & Approaches
-
-Whenever a pull request is opened or updated in your repository, the agent evaluates the changes and publishes a structured review comment on the PR thread.
-
-### The Approach Taken: Real-Time Webhook Server + Option B Transparent HITL
-
-Our core production architecture uses an always-on webhook service backed by PostgreSQL (`pgvector`) and Redis.
-
-```
-GitHub PR Webhook
-       │
-       ▼
-FastAPI Ingress (HMAC signature verification + Redis idempotency lock)
-       │
-       ▼
-ARQ Background Worker (LangGraph Multi-Agent Orchestrator)
-       │
-       ├───> Qdrant / pgvector (Fetches codebase semantic context)
-       ├───> Parallel Specialist Agents (Security, Quality, Test, Docs)
-       │
-       ▼
-Safety-Threshold Aggregator & Arbitrator
-       │
-       ├───> [Confidence ≥ 0.70] ──> Post PR Review Comment (APPROVE / COMMENT)
-       │
-       └───> [Confidence < 0.70 / Critical Flags] ──> Option B:
-                 ├── Enqueue to Postgres/Redis Human-in-the-Loop (HITL) Queue
-                 └── Immediately publish transparent informational review on PR
-                     with escalation banner: `[!WARNING] AI Review — Pending Human Verification`
+Submit a human resolution for an escalated review:
+```bash
+curl -X POST http://localhost:8001/api/v1/hitl/<hitl_id>/decision \
+  -H "X-API-Key: your_internal_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "human_verdict": "approve",
+    "reason": "Security findings were verified and deemed acceptable for this context.",
+    "reviewer_id": "lead_engineer"
+  }'
 ```
 
-#### Why We Took This Approach:
-1. **Full Codebase Semantic Memory**: The persistent PostgreSQL database with `pgvector` stores chunked code and embeddings from `scripts/index-repo.py`. Specialist agents can understand cross-file dependencies and repository conventions rather than evaluating the diff in isolation.
-2. **Transparent Immediate Feedback (Option B)**: Even when a review contains safety-critical edge cases that route it to the Human-In-The-Loop approval queue, a review comment is **immediately published to the PR** with an escalation banner (`[!WARNING] AI Review — Pending Human Verification`). The author receives instant feedback without human latency.
-3. **Audit Trail & Telemetry**: Every agent action, token spend, and decision is recorded in the `agent_events` table for continuous learning and analytics.
+---
 
-#### Live Demonstration:
-A real automated review generated by this system is published and visible on GitHub:
-👉 **[Pull Request #2: feat: add sample payment utility](https://github.com/PrathmeshRanjan/ai-pr-review-agent/pull/2#pullrequestreview-5274961023)**
+## Verification & Testing
 
-This demonstration highlights:
-- **Option B Transparent HITL Banner**: Displays `[!WARNING] AI Review — Pending Human Verification` so the author immediately sees findings while human sign-off is pending.
-- **Specialist Agent Findings**: Flagged missing currency codes, amount boundary validation, and unhandled exceptions with line-specific suggestions.
-- **Traceability**: Emits workflow IDs and per-agent confidence scores.
+The test suite covers unit tests, regression gates, and pipeline integration:
 
-#### Local Setup via Docker (How We Ran It):
-For our environment, we run the entire end-to-end stack locally using Docker:
-1. **Multi-Container Stack** (`docker-compose.dev.yml`):
-   - `prreview_api`: FastAPI webhook receiver and management REST API.
-   - `prreview_worker`: ARQ worker executing the LangGraph multi-agent orchestrator.
-   - `prreview_postgres`: PostgreSQL with `pgvector` for semantic code chunks, review history, and events.
-   - `prreview_redis`: ARQ job queue and idempotency locking.
-   - `prreview_qdrant`: Auxiliary vector store.
-2. **Starting the Environment**:
-   ```bash
-   docker compose -f docker-compose.dev.yml up -d
-   ```
-3. **Exposing Webhooks to GitHub (ngrok tunnel)**:
-   Because the webhook server runs locally inside Docker, we expose port 8001 (or 8000) using `ngrok`:
-   ```bash
-   ngrok http 8001
-   ```
-4. **GitHub Webhook Configuration**:
-   In GitHub repository **Settings > Webhooks > Add webhook**:
-   - **Payload URL**: `https://<your-ngrok-subdomain>.ngrok-free.app/webhook/github`
-   - **Content type**: `application/json`
-   - **Secret**: Set to match `GITHUB_WEBHOOK_SECRET` in `.env`.
-   - **Events**: Pull requests (`opened`, `synchronize`, `reopened`).
-5. **Token Scopes**:
-   The `GITHUB_TOKEN` in `.env` requires `pull-requests: write` and `contents: read` to fetch diffs and post review comments.
+| Test Suite | Command | Coverage |
+|---|---|---|
+| Review Aggregation & Posting | `docker exec prreview_api python3 tests/test_phase8.py` | Verdict mapping, comment construction, Option B fallback |
+| Security Gate & Threat Model | `docker exec prreview_api pytest tests/test_phase11.py` | Injection detection, regex patterns, payload sanitization |
+| End-to-End Pipeline Demo | `bash scripts/demo.sh` | Webhook ingress, ARQ processing, LangGraph execution, HITL triage |
+
+Run the complete regression suite inside the API container:
+```bash
+docker exec prreview_api pytest tests/
+```
 
 ---
 
-### Comparative Analysis: Other Possible Approaches Considered
-
-During architectural planning, several other approaches were evaluated:
-
-| Approach | Infrastructure | Vector Memory (RAG) | HITL Feedback | Why We Did Not Select It |
-|---|---|---|---|---|
-| **Serverless GitHub Actions** | Zero-server (Cloud CI) | ❌ Unavailable (Ephemeral runners lack persistent pgvector DB) | Automated threshold only | Discarded: CI runners are destroyed after each run, meaning repository-wide semantic memory and vector indexing cannot be retained locally without an external paid vector DB. |
-| **Option A: Strict Silent HITL** | Server + Postgres + Redis | ✅ Yes | ❌ Blocked until human approval | Discarded: Authors receive zero feedback until a human operator signs off on the dashboard, creating an engineering bottleneck. |
-| **GitHub App with Checks API & In-Diff Annotations** | Server + GitHub App | ✅ Yes | ✅ Yes | Discarded: Higher integration complexity (managing private `.pem` keys, JWT authentication, and diff hunk offset calculations) without significant benefit over PR review comments. |
-| **Scheduled Polling Bot** | Scheduled Cron Script | ✅ Yes | ❌ Delayed | Discarded: High latency (5–15 min poll delay) and quickly consumes GitHub API hourly rate limit quotas. |
-| **ChatOps / Slash-Command (`/review`)** | Server + Webhook | ✅ Yes | Manual trigger | Viable alternative for repos wanting on-demand reviews, but less seamless than automatic review on PR creation. |
-
----
-
-## Project Structure
+## Directory Layout
 
 ```
 backend/
-  api/              REST endpoints (webhook, reviews, economics, HITL)
-  agents/           4 specialist agents (security, quality, tests, docs)
-  config/           Settings, environment
-  data/             Ingestion pipeline, embedding, freshness
-  database/         Postgres async engine + vector pool
-  economics/        Cost repository, budget caps
-  job_queue/        ARQ worker, job definitions
-  memory/           VectorMemoryClient (pgvector + hybrid search)
-  observability/    Events spine, OTel traces
-  orchestrator/     LangGraph graph, nodes, engine
-  reliability/      Circuit breakers, retries
-  tools/            Tool registry, Docker sandbox
+├── agents/             Specialist agents (security, quality, test, docs, base contracts)
+├── api/                REST routers (reviews, queue, hitl_router, economics_router)
+├── auth/               API key and role-based access dependencies
+├── config/             Application settings and environment validation
+├── data/               Ingestion, chunking, and index freshness checks
+├── database/           PostgreSQL engine, models, and repository operations
+├── economics/          BudgetGuard, cost attribution, and model routing advisor
+├── hitl/               Human-in-the-loop queue, dispute resolution, and escalation rules
+├── integrations/       GitHub API client and data transfer schemas
+├── job_queue/          ARQ worker configuration and async job definitions
+├── memory/             pgvector client and Qdrant connector
+├── models/             Pydantic models for reviews, findings, and verdicts
+├── observability/      Audit logger, OpenTelemetry tracing, and metric alerting
+├── orchestrator/       LangGraph workflow graph, execution nodes, and state machine
+├── reliability/        Circuit breaker registry and retry policies
+├── security/           Input threat model and RBAC definitions
+├── tools/              Tool registry, deterministic sandbox, and LLM client wrappers
+└── webhook_receiver/   GitHub webhook HMAC validation and queue dispatch
 
 docs/
-  adr/              Architecture Decision Records (ADR-001 to ADR-004)
+└── adr/                Architectural Decision Records (ADR-001 through ADR-004)
 
 scripts/
-  migrations/       2026-06-vector-init.sql — idempotent schema DDL
-
-eval/               Golden dataset + regression configs
-frontend/           Next.js dashboard
-prompts/            Versioned prompt files per agent
+├── demo.sh             End-to-end integration and demonstration runner
+├── index-repo.py       Repository codebase RAG indexing utility
+├── migrations/         PostgreSQL schema definitions and pgvector initialization
+└── trigger-pr-review.py CLI trigger for testing live pull requests
 ```
-
----
-
-## Key Design Decisions
-
-- pgvector replaces external vector databases alongside Postgres (structured) — one connection, one backup
-- Redis stays for the ARQ job queue (right tool for that job)
-- `agent_events` table is the single source of truth for traces, costs, and audit
-- Continuous aggregates keep the dashboard fast at any scale — no full table scans
-- DiskANN / HNSW index over `code_chunks` gives fast similarity retrieval
-- HITL threshold is confidence-weighted — low-confidence findings queue for human review
-
----
-
-
