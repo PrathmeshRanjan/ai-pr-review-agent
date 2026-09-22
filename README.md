@@ -2,8 +2,6 @@
 
 An automated code review system built as a multi-agent pipeline. When a pull request event arrives via GitHub webhook, the system fans out analysis across four specialized sub-agents running in parallel: security, code quality, test coverage, and documentation. Each agent reasons over the diff together with repository context retrieved via semantic vector search. An arbitration layer aggregates agent findings using confidence-weighted voting, enforces safety thresholds, and publishes structured review comments directly to the pull request.
 
-The architecture is based on the design outlined in the study [Designing an AI Pull-Request Review Agent](https://www.antern.co/blogs/production-grade-ai-pr-review-agent/) by Ayush Singh (Antern). This implementation materializes the core principles of that study: specialist domain reasoners, grounded codebase memory, a unified PostgreSQL data spine, financial guardrails, and human oversight.
-
 ---
 
 ## Architectural Highlights
