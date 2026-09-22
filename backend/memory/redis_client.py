@@ -335,7 +335,7 @@ class RedisClient:
         """
         Returns True if Redis is reachable, False otherwise.
 
-        Used by the /health endpoint (Phase 13 will add Redis to health checks).
+        Used by the /health endpoint.
         Never raises — returns False on any error.
         """
         if self._pool is None:

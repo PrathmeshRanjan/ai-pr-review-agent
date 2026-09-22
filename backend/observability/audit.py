@@ -12,8 +12,7 @@ DESIGN OVERVIEW
 
   Wiki: "In regulated industries, agents accessing sensitive data without
   immutable audit logs creates legal exposure."  Even though PR review is not
-  strictly regulated, the pattern costs nothing and pays dividends at Phase 15
-  (Governance & Compliance).
+  strictly regulated, the pattern costs nothing and ensures accountability.
 
 JSONL VS DATABASE
   A JSONL file is:
@@ -22,13 +21,10 @@ JSONL VS DATABASE
     - Rotatable with logrotate
     - Importable into any log aggregator (Loki, Splunk, etc.)
 
-  Phase 15 will layer structured querying on top -- for now the file is enough.
-
 SENSITIVE DATA POLICY
   We do NOT log PR diff content or full LLM prompt/response text here.
   The audit log is metadata-only: review_id, verdict, agent_types, timestamps.
   This prevents the audit log itself from becoming a data-exfil vector.
-  (Phase 11 Security Architecture formalises this into a masking policy.)
 """
 
 from __future__ import annotations
@@ -53,10 +49,7 @@ class AuditLogger:
 
     Instantiate once and reuse across requests.  Thread-safe for single-writer
     scenarios (FastAPI / ARQ workers each open the file per write, so OS-level
-    append semantics give sufficient safety for our single-node Phase 13 setup).
-
-    Phase 13's multi-replica deployment will add a Redis-backed distributed
-    audit sink -- the interface here stays the same, the backend swaps out.
+    append semantics give sufficient safety).
     """
 
     def __init__(self, path: Optional[Path] = None) -> None:
@@ -192,10 +185,9 @@ class AuditLogger:
         threshold: float,
         blocked_reason: Optional[str] = None,
     ) -> None:
-        """Record the outcome of a Phase 9 regression gate check.
+        """Record the outcome of a regression gate check.
 
-        Bridges Phase 9 (Evaluation) with Phase 10 (Observability):
-        gate runs are now immutable audit records, not just pytest output.
+        Gate runs are recorded as immutable audit records.
         """
         event = ReviewEvent.EVAL_GATE_RUN if passed else ReviewEvent.EVAL_GATE_BLOCKED
         entry: dict[str, Any] = {
@@ -238,7 +230,6 @@ class AuditLogger:
         """Return all audit entries for a specific review_id.
 
         Full scan -- acceptable because audit logs are small and rarely queried.
-        Phase 15 will add an indexed store if this becomes a bottleneck.
         """
         all_entries = self.read_recent(limit=10_000)
         return [e for e in all_entries if e.get("review_id") == review_id]

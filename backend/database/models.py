@@ -187,9 +187,8 @@ class PRReviewRecord(Base):
     #   "Atomicity: only write this ID after GitHub confirms the review."
     #   -> If the GitHub API call fails, save_review() is never called,
     #      so this column never gets a partial value.
-    # NOTE (Phase 16 hotfix): GitHub review IDs have grown past int32 max
-    # (e.g. 4,292,477,140 observed on 2026-05-14). Use BigInteger so future
-    # IDs don't overflow and break review-row persistence.
+    # NOTE: GitHub review IDs have grown past int32 max
+    # (e.g. 4,292,477,140). Use BigInteger so IDs don't overflow.
     github_review_id: Mapped[int | None] = mapped_column(
         BigInteger,
         nullable=True,
@@ -598,7 +597,7 @@ class HITLReview(Base):
     )
 
     # Free-text reason the human provided for their decision.
-    # Required on rejection so we can build training signal (Phase 20).
+    # Required on rejection to build feedback and audit signal.
     human_reason: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -697,27 +696,22 @@ class HITLReview(Base):
 
 # ---------------------------------------------------------------------------
 # HITLFeedback
-#
-# Training signal table — one row per human decision recorded as a labelled
-# example for Phase 20 (Continuous Learning).
+##
+# Feedback signal table — one row per human decision recorded as a labelled
+# example for continuous evaluation and audit analysis.
 #
 # DESIGN (Derived-Data-Systems.md wiki):
 #   This is DERIVED data. Source of truth is HITLReview.
-#   It reformats the human decision into a shape suitable for fine-tuning datasets.
+#   It reformats the human decision into a shape suitable for analytics datasets.
 #   Can be rebuilt from HITLReview rows at any time.
-#
-# PHASE 20 NOTE:
-#   Phase 20 reads this table to build fine-tune datasets.
-#   Schema must remain stable from Phase 19 onward.
-#   Add columns additively (Encoding-and-Schema-Evolution.md: "adding is always safe").
 # ---------------------------------------------------------------------------
 class HITLFeedback(Base):
     """
-    Labelled training signal derived from a human HITL decision.
+    Labelled signal derived from a human HITL decision.
 
     Written by feedback.py immediately after a human resolves a HITLReview.
-    Read by Phase 20's reflection loop to detect systematic agent errors
-    and build fine-tuning datasets.
+    Read by the feedback loop to detect systematic agent errors
+    and evaluate agent quality.
     """
 
     __tablename__ = "hitl_feedback"
@@ -728,42 +722,53 @@ class HITLFeedback(Base):
         default=lambda: str(uuid.uuid4()),
         comment="UUID PK.",
     )
-
-    # The HITLReview that produced this feedback signal.
     hitl_review_id: Mapped[str] = mapped_column(
         String(128),
         ForeignKey("hitl_reviews.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment="FK to the parent HITLReview.",
+        comment="FK to hitl_reviews.id.",
     )
 
-    # Denormalized identifiers for dataset queries without JOINs.
+    # Denormalized context so training data export doesn't require joins
     repo_full_name: Mapped[str] = mapped_column(
-        String(255), nullable=False,
-        comment="Denormalized repo name.",
+        String(255),
+        nullable=False,
+        index=True,
+        comment="owner/repo.",
     )
     pr_number: Mapped[int] = mapped_column(
-        Integer, nullable=False,
+        Integer,
+        nullable=False,
         comment="PR number.",
     )
 
-    # The key comparison: what did agents say vs what did human say?
-    # This delta is the learning signal.
+    # Which agent made the call that was reviewed?
+    # Usually "aggregate" for the final verdict, or a specific agent_type.
+    agent_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="aggregate",
+        comment="security / quality / test / docs / aggregate.",
+    )
+
+    # What the agent originally said vs what the human said
     agent_verdict: Mapped[str] = mapped_column(
-        String(32), nullable=False,
-        comment="What the agents decided.",
+        String(32),
+        nullable=False,
+        comment="What the agent concluded.",
     )
     human_verdict: Mapped[str] = mapped_column(
-        String(32), nullable=False,
-        comment="What the human decided (the ground truth label).",
+        String(32),
+        nullable=False,
+        comment="What the human decided.",
     )
 
     # Was the human decision an OVERRIDE (agent wrong) or CONFIRMATION (agent right)?
     # "override"     = human changed the verdict
     # "confirmation" = human agreed with agent
     # "dismiss"      = human dismissed without a verdict (inconclusive)
-    # Phase 20 uses "override" rows to detect systematic agent errors.
+    # Used to detect systematic agent errors.
     feedback_type: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -772,7 +777,7 @@ class HITLFeedback(Base):
     )
 
     # Human's free-text reason. Especially valuable for overrides.
-    # Phase 20 uses this to cluster override reasons and surface patterns.
+    # Used to cluster override reasons and surface patterns.
     reason: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -781,7 +786,7 @@ class HITLFeedback(Base):
     )
 
     # The full diff snippet or PR context at decision time.
-    # Stored so Phase 20 can build (input, label) pairs without re-fetching GitHub.
+    # Stored so evaluation can build (input, label) pairs without re-fetching GitHub.
     context_snapshot: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -804,7 +809,7 @@ class HITLFeedback(Base):
 
 
 # ---------------------------------------------------------------------------
-# LLMCallLog (Phase 16 — Economics & Cost Control)
+# LLMCallLog (Economics & Cost Control)
 #
 # One row per LLM API call. Captures token counts, cost, latency, and the
 # (workflow_id, agent_type, model) attribution tuple needed to answer:
@@ -821,8 +826,7 @@ class HITLFeedback(Base):
 # be archived/aggregated independently.
 #
 # NEW TABLE — ADDITIVE CHANGE:
-# create_all_tables() in main.py lifespan creates this on next startup.
-# No Alembic migration needed (Phase 15 still tracks Alembic as a TODO).
+# create_all_tables() in main.py lifespan creates this on startup.
 # ---------------------------------------------------------------------------
 class LLMCallLog(Base):
     """

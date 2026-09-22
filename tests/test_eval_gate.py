@@ -1,17 +1,16 @@
 # tests/eval_gate.py
 #
 # WHAT THIS IS:
-#   Eval gate — the final CI check before every deploy to Railway.
+#   Eval gate — the CI check to verify prompt quality.
 #   Runs the full 4-agent LangGraph review pipeline in-process using the
 #   REAL OpenAI API and the REAL prompt registry, but with mocked GitHub,
 #   Redis, and Postgres (so no containers needed).
 #
-# WHY THIS EXISTS (separate from smoke_phase14.py):
+# WHY THIS EXISTS:
 #   Smoke tests mock the LLM. They verify plumbing, not behavior.
 #   The eval gate tests the ACTUAL prompts + ACTUAL model calls.
 #   If anyone edits backend/prompts/templates/security/v1.txt and the
-#   verdict changes from REQUEST_CHANGES to APPROVE, this test fails
-#   and blocks the Railway deploy.
+#   verdict changes from REQUEST_CHANGES to APPROVE, this test fails.
 #   This is lightweight "prompt versioning in CI" — no separate eval
 #   framework needed, just pytest + a known fixture.
 #

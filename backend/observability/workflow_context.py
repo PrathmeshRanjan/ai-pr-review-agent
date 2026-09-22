@@ -1,6 +1,6 @@
 # backend/observability/workflow_context.py
 #
-# Phase 16 — Carries the active workflow_id and agent_type across the call
+# Carries the active workflow_id and agent_type across the call
 # stack without modifying every function signature.
 #
 # WHY A CONTEXTVAR (not a thread-local or arg threading)?

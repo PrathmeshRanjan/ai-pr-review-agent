@@ -82,10 +82,10 @@ class Permission(StrEnum):
     READ_AUDIT_LOG     -- GET /api/v1/audit
     READ_QUEUE         -- GET /api/v1/queue
     SUBMIT_REVIEW      -- POST /api/v1/reviews/{id}/decision (HITL override)
-    TRIGGER_EVAL       -- POST /api/v1/eval/run (Phase 9 regression gate)
+    TRIGGER_EVAL       -- POST /api/v1/eval/run (regression gate)
     MANAGE_API_KEYS    -- POST/DELETE /api/v1/admin/keys
     OVERRIDE_VERDICT   -- POST /api/v1/reviews/{id}/override
-    VIEW_COST_REPORT   -- GET /api/v1/admin/costs (Phase 16)
+    VIEW_COST_REPORT   -- GET /api/v1/admin/costs
     """
     READ_REVIEWS = "read_reviews"
     READ_AUDIT_LOG = "read_audit_log"

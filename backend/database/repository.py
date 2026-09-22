@@ -416,7 +416,6 @@ async def list_queue_items(
          Operators can see the pipeline is moving.
       2. Completed reviews that need human approval — status=completed AND
          needs_human_review=1. These are waiting for a HITL reviewer.
-         (Phase 19 will add POST /queue/{id}/approve to act on them.)
 
     ORDERING: created_at ASC (oldest first).
     The HITL reviewer should process in arrival order — fairness for developers

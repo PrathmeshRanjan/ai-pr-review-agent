@@ -222,7 +222,7 @@ class CircuitBreaker:
 
     def state_summary(self) -> dict:
         """
-        Serialisable summary for health endpoints and the Phase 13 /health route.
+        Serialisable summary for health endpoints and monitoring routes.
         """
         with self._lock:
             self._maybe_transition_to_half_open()
@@ -380,7 +380,7 @@ def reset_all_breakers() -> None:
 def list_breaker_summaries() -> list[dict]:
     """
     Return state_summary() for every registered breaker.
-    Used by the Phase 13 /health endpoint.
+    Used by the /health endpoint.
     """
     with _REGISTRY_LOCK:
         names = list(_REGISTRY.keys())

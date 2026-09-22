@@ -3,19 +3,7 @@
 # REST API endpoint for the review processing queue.
 #
 # ENDPOINTS:
-#   GET /api/v1/queue              — reviews that are in-flight or awaiting HITL
-#
-# PHASE 19 STUBS (placeholder comments for HITL actions):
-#   POST /api/v1/queue/{id}/approve  — human approves a HITL review
-#   POST /api/v1/queue/{id}/reject   — human rejects a HITL review
-#
-# WHY A SEPARATE ROUTER FROM reviews.py?
-# reviews.py is the read API for completed review history.
-# queue.py is the operational API — it shows live system state and
-# will grow into the HITL action API in Phase 19.
-# Keeping them separate respects the Single Responsibility Principle and
-# makes Phase 19 changes isolated (WIKI: CCP, Common-Closure-Principle,
-# clean-architecture: "things that change together, stay together").
+#   GET /api/v1/queue — reviews that are in-flight or awaiting HITL
 #
 # DEPENDENCY DIRECTION:
 #   queue.py imports from: database.repository, database.postgres,
@@ -86,7 +74,7 @@ async def get_queue_endpoint(
 
       2. HITL-pending reviews (status=completed, needs_human_review=true):
          These completed but the agent had low confidence.
-         A human reviewer must inspect and approve/reject via Phase 19 actions.
+         A human reviewer must inspect and resolve via the HITL API.
 
     Response shape:
         {
@@ -116,34 +104,3 @@ async def get_queue_endpoint(
         limit=limit,
         offset=offset,
     )
-
-
-# =============================================================================
-# PHASE 19 PLACEHOLDERS
-#
-# The HITL action endpoints (approve, reject) belong here.
-# They are NOT implemented yet — Phase 19 owns that work.
-# The stubs are documented here so Phase 19 can find the right file.
-# =============================================================================
-
-# TODO Phase 19: POST /api/v1/queue/{review_id}/approve
-#   - Load the review from Postgres
-#   - Validate status == "completed" and needs_human_review == True
-#   - Call github_client.post_review() with the approved findings
-#   - Update review: needs_human_review=False, github_review_id=<id>
-#   - Log the human approval decision to the audit trail (Phase 15)
-#   - Require REVIEWER or ADMIN role (Phase 11 RBAC)
-
-# TODO Phase 19: POST /api/v1/queue/{review_id}/reject
-#   - Load the review from Postgres
-#   - Validate status == "completed" and needs_human_review == True
-#   - Mark all findings human_approved=False (do not post to GitHub)
-#   - Update review: needs_human_review=False, status="dismissed"
-#   - Log the human rejection decision to the audit trail (Phase 15)
-#   - Require REVIEWER or ADMIN role (Phase 11 RBAC)
-
-# TODO Phase 19: POST /api/v1/queue/{review_id}/findings/{finding_id}/dispute
-#   - Called by the PR author to dispute a specific finding
-#   - Creates a dispute record in Postgres
-#   - Notifies the original reviewer (if HITL approved the finding)
-#   - Feeds back into Phase 20 learning pipeline (disputed findings as negatives)

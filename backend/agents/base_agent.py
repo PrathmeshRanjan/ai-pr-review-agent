@@ -259,7 +259,7 @@ class BaseAgent(ABC):
             _repo_name = repo_name
             _retrieved_context = retrieved_context
             _peer_context = ()  # no peer context in old-style calls
-            _workflow_id = None  # Phase 16: legacy callers have no workflow id
+            _workflow_id = None
 
         # STEP 1: Truncate the diff to this agent's context budget.
         truncated_diff = _truncate_to_budget(_diff, config.context_budget_tokens)
@@ -295,7 +295,7 @@ class BaseAgent(ABC):
         )
 
         # STEP 3: Call the LLM.
-        # Phase 16: enforce daily budget cap + tag the call for cost
+        # Enforce daily budget cap + tag the call for cost
         # attribution. BudgetExceededError -> degraded result that triggers
         # HITL via the existing low-confidence escalation path.
         from backend.economics import BudgetExceededError, BudgetGuard
@@ -484,8 +484,6 @@ class BaseAgent(ABC):
 
         WHY synchronous (not async):
             The current tool handlers are all synchronous (regex, subprocess).
-            Async tools (HTTP-based advisories in Phase 14) will need an
-            async variant. For Phase 7 sync is correct and simpler.
 
         Args:
             tool_name: name of a registered tool (e.g. "check_secrets_pattern")

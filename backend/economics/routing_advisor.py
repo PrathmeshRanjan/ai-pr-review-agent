@@ -1,11 +1,9 @@
 # backend/economics/routing_advisor.py
 #
-# Phase 16 — Advisory model recommendations.
+# Advisory model recommendations.
 #
-# This module produces RECOMMENDATIONS, never automatic switches. Phase 20
-# (Continuous Learning) will close the feedback loop: it consumes
-# (recommendation, actual_outcome) pairs to learn when to actually switch.
-# For now we just compute "what would we have spent on a cheaper model?"
+# This module produces RECOMMENDATIONS, never automatic switches.
+# It computes "what would we have spent on a cheaper model?"
 # so the dashboard can show an opportunity-cost number.
 #
 # Pricing tiers mirror the wiki's complexity-tiered routing pattern:

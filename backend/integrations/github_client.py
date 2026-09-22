@@ -227,8 +227,7 @@ _RATE_LIMIT_WARNING_THRESHOLD = 100
 #    3. The quality_agent should flag "diff too large" as a finding.
 #
 # 500KB is generous but bounded. Most PRs are well under 50KB.
-# Adjust MAX_DIFF_BYTES in settings (Phase 18) when we add diff filtering
-# (strip lockfiles, generated files, etc.)
+# Can be adjusted via MAX_DIFF_BYTES in settings.
 # =============================================================================
 
 _MAX_DIFF_BYTES = 500_000  # 500 KB
@@ -508,7 +507,7 @@ class GitHubClient:
              has produced a verdict. We never call this with partial results.
           -> If this call fails, the review is NOT marked as posted in Postgres.
              The job queue will not re-enqueue (idempotency key prevents duplicate).
-             A human operator can re-trigger via the dashboard (Phase 13).
+             A human operator can re-trigger via the API/dashboard.
 
         Raises:
             GitHubAPIError: Could not post the review.

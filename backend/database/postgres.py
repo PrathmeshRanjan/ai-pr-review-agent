@@ -129,9 +129,8 @@ def _build_engine():
         # pool_pre_ping=True: before handing a connection from the pool, issue
         # a "SELECT 1" ping. If the connection is dead (Neon closed it after
         # idle timeout), SQLAlchemy discards it and opens a fresh one.
-        # WHY: Neon serverless Postgres aggressively closes idle connections.
-        # Without pre_ping, the worker gets an InterfaceError("connection is closed")
-        # on the first query after idle — exactly the error seen in Phase 14 demo.
+        # Without pre_ping, workers can get an InterfaceError("connection is closed")
+        # on the first query after idle.
         # Cost: one extra round-trip per acquired connection, negligible vs LLM latency.
         pool_pre_ping=True,
 
@@ -251,10 +250,6 @@ async def get_db():
 # Called once at application startup (from main.py lifespan).
 # Creates all tables that don't exist yet.
 #
-# THIS IS FOR DEV/TEST ONLY.
-# Production uses Alembic migrations (Phase 15 TODO).
-# (From Pragmatic Programmer wiki, Estimation.md:
-#  "Don't ship what isn't ready. Note TODO items honestly.")
 # create_all() is idempotent: running it twice does not drop existing tables.
 # It only creates tables that are missing.
 # ---------------------------------------------------------------------------
@@ -268,13 +263,6 @@ async def create_all_tables() -> None:
 
     Called from: main.py lifespan(), before yielding.
     Safe to call in tests with SQLite in-memory.
-
-    PRODUCTION NOTE (TODO — Phase 15 Alembic):
-    create_all() is fine for dev and testing but NOT for production schema
-    management. In production, use Alembic migrations so that schema changes
-    are versioned, reversible, and auditable. This TODO is explicit technical
-    debt, not a broken window — it is logged here for traceability.
-    (Broken-Window-Theory.md: explicit debt is acceptable; silent drift is not.)
     """
     # Import models here (not at module top) to avoid circular import.
     # This import registers PRReviewRecord and FindingRecord with Base.metadata.

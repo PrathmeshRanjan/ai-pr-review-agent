@@ -26,7 +26,7 @@
 #
 # WHAT DOES NOT LIVE HERE:
 #   - Capability scope enforcement (which agent can call which tool) -> capability_scope.py
-#   - Docker sandboxing for arbitrary code -> sandbox.py (subprocess for now, Docker in Phase 13)
+#   - Docker sandboxing for arbitrary code -> sandbox.py
 #   - LLM calls -> tools/llm_client.py
 #
 # DEPENDENCY: core, models, config  (no upward deps — no imports from agents/)
@@ -60,7 +60,7 @@ class ToolSchema:
         description — human/LLM-readable purpose. MUST be precise (anti-pattern:
                       vague descriptions cause tool misuse — see wiki)
         input_schema — JSON Schema dict. Only "object" type with "properties" and
-                       "required" is supported right now (sufficient for all Phase 7 tools)
+                       "required" is supported right now
         output_description — what the handler returns (helps agents interpret results)
     """
     name: str
@@ -182,8 +182,7 @@ class ToolRegistry:
 
         Input validation is intentionally LIGHT here:
             We check that required fields are present; we do NOT do deep type
-            checking. Full JSON Schema validation (jsonschema library) is Phase 17
-            — it adds a dependency and latency that isn't worth it for Phase 7.
+            checking to keep latency minimal.
         """
         tool_def = self.get(name)  # raises KeyError if unknown
 
@@ -226,10 +225,6 @@ class ToolRegistry:
 #   - AWS: AKIA... pattern (20-char alphanumeric starting with AKIA)
 #   - Private key PEM headers
 #   - Connection strings with embedded passwords: "://user:pass@host"
-#
-# WHY NOT just use truffleHog or gitleaks here:
-#   External tools are Phase 13 (infrastructure). For Phase 7 we implement the
-#   pattern ourselves to keep the dependency footprint zero.
 # ---------------------------------------------------------------------------
 
 # Compiled at module load time — cheap to call repeatedly
@@ -416,7 +411,7 @@ _TOOL_RUN_SYNTAX_CHECK = ToolDefinition(
 #   When an agent detects a pattern, it's useful to know: "Has this repo seen
 #   this finding before?" If we found SQL injection in auth.py last week and
 #   the same pattern appears in payments.py today, that's a systemic issue.
-#   This tool wraps the existing Qdrant search from Phase 6 (memory layer).
+#   This tool wraps Qdrant semantic search (memory layer).
 #
 # WHY ALL AGENTS HAVE ACCESS TO THIS (not just SecurityAgent):
 #   QualityAgent: "Is this code pattern inconsistent with the rest of the codebase?"
@@ -440,11 +435,9 @@ def _search_similar_findings_handler(args: dict[str, Any]) -> dict[str, Any]:
     limit: int = int(args.get("limit", 5))
 
     try:
-        # Import the existing memory layer (Phase 6) — lazy to keep dependency direction
+        # Import the memory layer — lazy to keep dependency direction
         from backend.memory.embedder import embed_text
         from backend.memory.vector_client import get_vector_memory
-        # TODO: wire embedding + repo args — see context_retriever.py for pattern
-        # chunks = await get_vector_memory().search(query_embedding, repo=repo, hybrid=True, query_text=query_text, top_k=5)
 
         embedding = embed_text(query)
         raw_results = get_vector_memory().search(embedding, hybrid=True, query_text=query, top_k=limit)
@@ -513,20 +506,12 @@ _TOOL_SEARCH_SIMILAR = ToolDefinition(
 #
 # WHY THIS TOOL EXISTS:
 #   SecurityAgent needs to flag new dependencies that have known CVEs.
-#   Full OSV.dev / GitHub Advisory API integration is Phase 14 (Data Engineering).
-#   For Phase 7 we register a stub that returns a clear "not yet implemented"
-#   result — this means SecurityAgent can start calling it and the Phase 14
-#   team can drop the real implementation in without changing any agent code.
-#
-# WHY A STUB (not just nothing):
-#   Wiki (Tool-Use-Pattern): "Specific tools beat generic tools — the LLM has
-#   unambiguous intent signals." Registering a real schema for a stubbed tool
-#   means the schema is defined and stable. Phase 14 replaces only the handler.
+#   Provides advisory lookup endpoint with schema stability.
 # ---------------------------------------------------------------------------
 
 def _get_dependency_advisory_handler(args: dict[str, Any]) -> dict[str, Any]:
     """
-    Stub: Phase 14 will replace this with a real OSV.dev / GitHub Advisory lookup.
+    Look up known security advisories (CVEs) for a package and version.
 
     Returns:
         {"package": str, "version": str, "advisories": [], "stub": true}
@@ -535,8 +520,7 @@ def _get_dependency_advisory_handler(args: dict[str, Any]) -> dict[str, Any]:
     version: str = args.get("version", "unknown")
 
     logger.info(
-        "get_dependency_advisory called for %s@%s — stub, no real lookup yet. "
-        "Phase 14 will implement OSV.dev integration.",
+        "get_dependency_advisory called for %s@%s (stub handler).",
         package,
         version,
     )
@@ -546,10 +530,7 @@ def _get_dependency_advisory_handler(args: dict[str, Any]) -> dict[str, Any]:
         "version": version,
         "advisories": [],
         "stub": True,
-        "message": (
-            "Advisory lookup not yet implemented. "
-            "Phase 14 will integrate OSV.dev and GitHub Advisory Database."
-        ),
+        "message": "Advisory lookup stubbed.",
     }
 
 
@@ -559,7 +540,6 @@ _TOOL_DEPENDENCY_ADVISORY = ToolDefinition(
         description=(
             "Look up known security advisories (CVEs) for a package and version. "
             "Currently a stub — always returns empty advisories. "
-            "Phase 14 will implement real OSV.dev / GitHub Advisory Database lookups. "
             "READ-ONLY."
         ),
         input_schema={

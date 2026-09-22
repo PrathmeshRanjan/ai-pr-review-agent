@@ -1,6 +1,6 @@
 # backend/economics/cost_repository.py
 #
-# Phase 16 — Persistence + aggregation for LLM cost data.
+# Persistence + aggregation for LLM cost data.
 #
 # DESIGN:
 #   - record_llm_call():    Fire-and-forget insert. Errors logged, never raised.

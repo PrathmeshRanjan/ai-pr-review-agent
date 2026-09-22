@@ -137,8 +137,7 @@ async def get_stale_files(
 #   We use SQLAlchemy's merge() which does a SELECT first, then INSERT or
 #   UPDATE. This is correct for a low-volume operation (one row per file
 #   per ingestion run). For bulk ingestion of thousands of files, a
-#   PostgreSQL INSERT ... ON CONFLICT would be more efficient — that's a
-#   future optimisation if needed (Phase 20 continuous learning may add it).
+#   PostgreSQL INSERT ... ON CONFLICT would be more efficient as a future optimisation.
 # ---------------------------------------------------------------------------
 async def mark_files_embedded(
     session: AsyncSession,

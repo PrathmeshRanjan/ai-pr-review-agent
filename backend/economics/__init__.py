@@ -1,6 +1,6 @@
 # backend/economics/__init__.py
 #
-# Phase 16 — Economics & Cost Control.
+# Economics & Cost Control.
 #
 # This package owns:
 #   - cost_repository.py    Append + aggregate LLMCallLog rows.

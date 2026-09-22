@@ -94,7 +94,7 @@ CREATE INDEX code_chunks_emb_idx ON code_chunks
 | Sandbox | Docker (isolated code execution) |
 | Frontend | Next.js (review dashboard, HITL queue, trace viewer) |
 | Observability | OpenTelemetry + events table |
-| Deploy | Railway |
+| Runtime | Docker (Local Multi-Container Stack) |
 
 ---
 
@@ -284,36 +284,6 @@ During architectural planning, several other approaches were evaluated:
 
 ---
 
-## 20-Phase Build Roadmap
-
-Each phase is one chapter in the course. Ends green. Has a written gate before the next phase starts.
-
-| # | Phase |
-|---|---|
-| 0 | Cognitive Design — autonomy level, HITL boundaries |
-| 1 | System Architecture — module graph, ADRs |
-| 2 | Frontend Engineering — dashboard shell, streaming |
-| 3 | Backend and API Layer — FastAPI, webhook, idempotency |
-| 4 | Workflow Orchestration — LangGraph, parallel fan-out |
-| 5 | LLM and Reasoning Layer — model routing, prompt registry |
-| 6 | Memory Architecture — RAG on pgvector, hybrid retrieval |
-| 7 | Tooling and Sandboxing — tool registry, Docker sandbox |
-| 8 | Multi-Agent Systems — 4 specialists, contracts, aggregator |
-| 9 | Evaluation Systems — golden dataset, LLM-as-judge |
-| 10 | Observability and Tracing — OTel spans in agent_events table |
-| 11 | Security Architecture — threat model, RBAC, audit trail |
-| 12 | Reliability Engineering — retries, circuit breakers, idempotency |
-| 13 | Infrastructure — provisioning and deployment |
-| 14 | Data Engineering — ingestion pipeline, schema design |
-| 15 | Governance and Compliance — audit logs, explainability |
-| 16 | Economics and Cost Control — per-agent cost via continuous aggregates |
-| 17 | Developer Experience — prompt playground, trace viewer |
-| 18 | CI/CD for AI — prompt versioning, eval gates, canary releases |
-| 19 | Human in the Loop — approval queue, escalation, feedback |
-| 20 | Continuous Learning — drift detection from continuous aggregates |
-
----
-
 ## Project Structure
 
 ```
@@ -332,7 +302,7 @@ backend/
   tools/            Tool registry, Docker sandbox
 
 docs/
-  adr/              Architecture Decision Records (ADR-001 to ADR-002)
+  adr/              Architecture Decision Records (ADR-001 to ADR-004)
 
 scripts/
   migrations/       2026-06-vector-init.sql — idempotent schema DDL

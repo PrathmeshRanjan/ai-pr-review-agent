@@ -1,16 +1,15 @@
 # backend/hitl/feedback.py
 #
-# HITL Feedback — Phase 19.
+# HITL Feedback.
 #
 # RESPONSIBILITY:
 #   Persist a human HITL decision as a labelled training signal (HITLFeedback row).
-#   This is the data pipeline entry point for Phase 20 (Continuous Learning).
 #
 # DESIGN (Derived-Data-Systems.md wiki):
 #   HITLFeedback is DERIVED data.
 #   Source of truth: HITLReview row.
 #   This module reformats the human decision into a shape suitable for
-#   offline dataset construction (Phase 20 fine-tuning pipeline).
+#   offline dataset construction and model evaluation.
 #   Can be rebuilt from HITLReview rows at any time.
 #
 # FEEDBACK TYPES:
@@ -18,15 +17,10 @@
 #   "confirmation" — human agreed with the agent (agent was right)
 #   "dismiss"      — human dismissed without a clear verdict (inconclusive)
 #
-#   Phase 20's reflection loop uses OVERRIDE rows to detect systematic errors.
+#   Reflection loops use OVERRIDE rows to detect systematic errors.
 #   CONFIRMATION rows are also useful — they tell us what the agent got right.
 #   (LLMOps-Essentials.md wiki: "Human feedback is the ground truth signal
 #    for alignment. Record it faithfully.")
-#
-# PHASE 20 CONTRACT:
-#   This module's output schema (HITLFeedback columns) is stable from Phase 19.
-#   Phase 20 reads this table directly — do not rename columns.
-#   Add new columns additively if needed (Encoding-and-Schema-Evolution.md).
 
 import logging
 import uuid
@@ -109,8 +103,8 @@ async def record_feedback(
         # The human's decision is already committed. Feedback is best-effort here.
         # (Stability-Patterns.md: "Failures are inevitable. Contain the damage.")
         #
-        # NOTE: If this fails repeatedly, Phase 20 will have incomplete training data.
-        # Monitor this path. Add a retry queue in Phase 20 if needed.
+        # NOTE: If this fails repeatedly, feedback records will be incomplete.
+        # Monitor this path.
         logger.error(
             "hitl_feedback | record_failed | hitl_id=%s error=%s | "
             "dispute already committed, feedback lost for this review",

@@ -1,6 +1,6 @@
 # backend/hitl/escalation.py
 #
-# HITL Escalation Policy — Phase 19.
+# HITL Escalation Policy.
 #
 # RESPONSIBILITY:
 #   Given the output of aggregate_results, decide WHETHER a review should be
@@ -14,22 +14,14 @@
 #   - The orchestrator (nodes.py) calls should_escalate() and passes the result
 #     to queue.py if True. Dependency flows inward.
 #
-# ESCALATION RULES (locked in Phase 0 cognitive design, threshold adjusted Phase 18):
+# ESCALATION RULES:
 #   Rule 1: Security agent failed       -> cannot safely approve -> HITL
 #   Rule 2: 3+ agents say CRITICAL      -> Safety-Threshold rule -> HITL
 #   Rule 3: Overall confidence < 0.40   -> agent is uncertain    -> HITL
 #   Rule 4: Only 1 agent succeeded      -> too little data        -> HITL
 #
 # WHY THESE RULES LIVE HERE (not in nodes.py):
-#   nodes.py already has escalation logic but it is INLINE — interleaved with
-#   LangGraph state manipulation. That makes the rules hard to test, reuse, or
-#   change independently. This module extracts the rules into a named, testable
-#   function. nodes.py will call this function in Phase 19 instead of re-implementing.
-#
-# THRESHOLD HISTORY:
-#   Phase 8:  threshold = 2+ CRITICAL (too aggressive, hid reviews silently)
-#   Phase 18: threshold = 3+ CRITICAL (demo-day-readiness pitfall #34)
-#   Phase 19: threshold = 3+ CRITICAL (confirmed, no change)
+#   Extracts the rules into a named, testable function separate from LangGraph state manipulation.
 
 import logging
 from dataclasses import dataclass

@@ -8,17 +8,13 @@
 #   The sandbox is the deterministic safety gate that sits BETWEEN the agent's
 #   LLM reasoning and any real code execution. No code runs outside this sandbox.
 #
-# WHAT "SANDBOX" MEANS IN PHASE 7 vs. PHASE 13:
-#   Phase 7 (NOW): subprocess with timeout + output cap + allowlist of commands.
-#       No Docker. No network isolation. This is sufficient for SYNTAX CHECKING
-#       because `python3 -c "compile(...)"` and `node --check` are:
-#           - Read-only (no file writes)
-#           - No network (no imports that call home)
-#           - CPU-bounded (syntax check is O(n) in source length)
-#
-#   Phase 13 (LATER): Docker container with seccomp, no-network flag, read-only
-#       filesystem. Needed for ARBITRARY code execution (e.g., running user tests).
-#       Not needed here — don't over-engineer.
+# DESIGN:
+#   Subprocess sandbox with timeout + output cap + allowlist of commands.
+#   This is sufficient for SYNTAX CHECKING because `python3 -c "compile(...)"`
+#   and `node --check` are:
+#       - Read-only (no file writes)
+#       - No network (no imports that call home)
+#       - CPU-bounded (syntax check is O(n) in source length)
 #
 # THREAT MODEL (what this sandbox prevents):
 #   - Shell injection via code argument:

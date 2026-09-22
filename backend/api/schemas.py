@@ -142,7 +142,7 @@ class QueueItem(BaseModel):
     A review that is either in-flight or awaiting human attention.
 
     Used by operators to monitor active reviews and by the HITL UI
-    (Phase 19) to present items needing human decisions.
+    to present items needing human decisions.
     """
 
     id: str

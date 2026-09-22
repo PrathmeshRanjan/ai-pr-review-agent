@@ -105,9 +105,6 @@ def build_review_graph():
     workflow.add_edge("fan_out_agents", "aggregate_results")
 
     # aggregate_results -> post_review: always runs (post_review handles HITL internally)
-    # NOTE: We could add a conditional edge here to route to a HITL node instead.
-    # For Phase 4, post_review handles both paths internally.
-    # Phase 19 will split this into: post_review (auto) vs hitl_queue (human).
     workflow.add_edge("aggregate_results", "post_review")
 
     # post_review -> END: the graph is done

@@ -1,6 +1,6 @@
 # backend/api/economics_router.py
 #
-# Phase 16 — Economics & Cost Control REST API.
+# Economics & Cost Control REST API.
 #
 # ENDPOINTS (all auth-gated):
 #   GET /api/v1/economics/summary

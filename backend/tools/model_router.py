@@ -173,9 +173,9 @@ def get_all_configs() -> dict[AgentType, ModelConfig]:
     Returns a copy of the full routing table.
 
     Used by:
-      - Phase 9 (Evaluation) to enumerate all models being tested
-      - Phase 10 (Observability) to report cost breakdowns per model
-      - Phase 16 (Economics) dashboard to show model costs
+      - Evaluation tests to enumerate all models being tested
+      - Observability to report cost breakdowns per model
+      - Economics dashboard to show model costs
 
     Returns a copy so callers cannot mutate the routing table.
     """

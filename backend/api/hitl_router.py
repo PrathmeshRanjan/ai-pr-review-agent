@@ -1,6 +1,6 @@
 # backend/api/hitl_router.py
 #
-# HITL REST API — Phase 19.
+# HITL REST API.
 #
 # ENDPOINTS:
 #   GET  /api/v1/hitl/queue               — list pending HITL items

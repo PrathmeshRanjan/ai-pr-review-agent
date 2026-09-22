@@ -1,6 +1,6 @@
 # backend/hitl/dispute.py
 #
-# HITL Dispute Use Case — Phase 19.
+# HITL Dispute Use Case.
 #
 # RESPONSIBILITY:
 #   Handle a human reviewer's decision on a HITL-escalated review.
@@ -27,7 +27,7 @@
 #   If GitHub fails, the HITLReview is still marked resolved in Postgres
 #   and feedback is still recorded.
 #   posted_to_github=False persists for visibility — the review can be
-#   retried via the retry endpoint (Phase 17).
+#   retried via the retry endpoint.
 
 import logging
 from dataclasses import dataclass
@@ -103,7 +103,7 @@ class DisputeResult:
 #   3. Assert status is still resolvable (not already resolved by another reviewer).
 #   4. Apply new status + human verdict.
 #   5. Commit DB transaction.
-#   6. Record feedback signal (Phase 20 training data).
+#   6. Record feedback signal.
 #   7. Post to GitHub (best-effort).
 #   Returns DisputeResult.
 # ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ async def resolve_dispute(
         request.human_verdict, request.reviewer_id,
     )
 
-    # Step 6: Record feedback (Phase 20 training signal).
+    # Step 6: Record feedback.
     # Build context snapshot from the findings stored on the HITL row.
     feedback_id = await record_feedback(
         hitl_review_id=request.hitl_review_id,
@@ -232,7 +232,7 @@ async def resolve_dispute(
         # Map human verdict to GitHub review event.
         # (demo-day-readiness pitfall #35: REQUEST_CHANGES fails when reviewer == PR author.
         #  For HITL we use the same bot account rule. If bot account not set up,
-        #  fall back to COMMENT as we did in Phase 8/18.)
+        #  fall back to COMMENT.)
         github_event_str = _human_verdict_to_github_event(request.human_verdict)
         github_event = ReviewEvent(github_event_str)
         body = _build_github_review_body(
@@ -256,7 +256,7 @@ async def resolve_dispute(
             commit_id=commit_id,
             body=body,
             event=github_event,
-            comments=[],   # no inline comments (Phase 17 restores those)
+            comments=[],
         )
 
         await github_client.post_pr_review(
@@ -312,15 +312,13 @@ def _human_verdict_to_github_event(human_verdict: str) -> str:
 
     (demo-day-readiness pitfall #35: GitHub 422 when reviewer == PR author.)
     """
-    # TODO (Phase 19 proper): detect whether GITHUB_BOT_ACCOUNT is set.
-    # If bot account configured, use APPROVE / REQUEST_CHANGES.
-    # For now, always COMMENT — GitHub returns 422 if reviewer == PR author,
+    # Always COMMENT — GitHub returns 422 if reviewer == PR author,
     # which is the case when running with the developer's own GITHUB_TOKEN.
     # The DB still records the true human_verdict; only the GitHub-visible
     # event is downgraded to COMMENT to avoid 422.
     mapping = {
-        "approve": "COMMENT",          # COMMENT until dedicated bot account
-        "request_changes": "COMMENT",  # COMMENT until dedicated bot account
+        "approve": "COMMENT",
+        "request_changes": "COMMENT",
         "dismiss": "COMMENT",
     }
     return mapping.get(human_verdict, "COMMENT")

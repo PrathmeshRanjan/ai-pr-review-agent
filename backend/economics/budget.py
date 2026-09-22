@@ -1,6 +1,6 @@
 # backend/economics/budget.py
 #
-# Phase 16 — BudgetGuard: hard daily-cap enforcement on LLM spend.
+# BudgetGuard: hard daily-cap enforcement on LLM spend.
 #
 # CONTRACT:
 #   - check_daily_budget() is called BEFORE expensive LLM calls.
@@ -14,9 +14,8 @@
 #   Per-review caps require coordinating across parallel fan-out agents (4
 #   agents firing simultaneously cannot share a precise running total without
 #   a distributed lock). We surface per-review spend as a *metric* on the
-#   summary endpoint and let Phase 20 use those numbers to retrain routing
-#   decisions. Daily cap is the single number that actually matters for "did
-#   we burn $10k overnight".
+#   summary endpoint. Daily cap is the single number that actually matters for
+#   "did we burn $10k overnight".
 #
 # FAIL-OPEN BEHAVIOR:
 #   If the daily-spend query itself fails (DB hiccup), we log and PASS the

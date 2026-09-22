@@ -171,7 +171,7 @@ async def run_pr_review(
     )
 
     # -------------------------------------------------------------------------
-    # Step 5: Trigger background repository ingestion (Phase 14)
+    # Step 5: Trigger background repository ingestion
     #
     # After a successful review, we kick off ingestion of the repo's codebase
     # into Qdrant. This runs as a separate ARQ job — non-blocking, best-effort.
@@ -305,7 +305,7 @@ async def enqueue_review_job(
 
 
 # =============================================================================
-# WORKER FUNCTION: ingest_repository_job  (Phase 14)
+# WORKER FUNCTION: ingest_repository_job
 #
 # Background ingestion job — indexes a repo's source files into Qdrant.
 # Enqueued by run_pr_review after a successful review completes.

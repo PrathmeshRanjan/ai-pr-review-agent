@@ -1,13 +1,9 @@
 # backend/agents/contracts.py
 #
-# Phase 8: Formal typed contracts for the multi-agent system.
+# Formal typed contracts for the multi-agent system.
 #
 # WHY THIS FILE EXISTS:
-# Before Phase 8, agents received positional string arguments and returned
-# findings as a raw list. There was no formal contract — any caller could
-# pass any string and hope the agent understood it.
-#
-# This file formalises THREE contracts:
+# Provides formal typed contracts for agents:
 #
 #   1. AgentTask (INPUT CONTRACT):
 #      A typed dataclass that every agent receives as its input.
@@ -29,7 +25,7 @@
 #        said what. Fix: emit full verdict_breakdown and individual_verdicts
 #        in the audit log so conflicts are traceable."
 #      Every aggregate_results call emits a VerdictBreakdown. It is stored
-#      in state and will be surfaced in the Phase 17 trace viewer.
+#      in state and surfaced in trace view and audit logs.
 #
 # WIKI CITATIONS:
 #   WorkTask-Contract.md:
@@ -116,13 +112,10 @@ class AgentVerdict(str, Enum):
 #   gives enough cross-domain awareness to avoid duplicate flagging without
 #   blowing the token budget.
 #
-# PHASE 8 SCOPE:
-#   peer_context is populated IN THE SEQUENTIAL CASE only.
-#   In the current parallel fan-out (Phase 4), all agents start simultaneously —
-#   there are no prior agent results to share at fan-out time.
-#   peer_context will be populated in Phase 20 (reflection loop) when a second
-#   sequential pass is triggered. For now, agents receive peer_context=[] and
-#   the system works exactly as before — this is additive, not breaking.
+# SCOPE:
+#   peer_context is populated in sequential passes when prior agent findings exist.
+#   In the default parallel fan-out, all agents start simultaneously —
+#   there are no prior agent results to share at fan-out time (peer_context=()).
 # =============================================================================
 
 @dataclass(frozen=True)
@@ -240,15 +233,12 @@ class AgentTask:
     # -------------------------------------------------------------------------
 
     # Compact summaries of what other agents found (may be empty list).
-    # Source: built from agent_results already in state (Phase 8 sequential pass).
-    # In the parallel fan-out (Phase 4), this is always [] because agents start
-    # simultaneously — there are no prior results to share.
     # Used by: agents to avoid double-flagging files already caught by peers.
     # Stored as tuple (immutable) — each element is a PeerFindingSummary.
     peer_context: tuple["PeerFindingSummary", ...] = field(default_factory=tuple)
 
     # -------------------------------------------------------------------------
-    # Telemetry / cost attribution (Phase 16)
+    # Telemetry / cost attribution
     # -------------------------------------------------------------------------
 
     # Workflow ID for cost attribution and tracing.
@@ -274,7 +264,7 @@ class VerdictRecord:
     One agent's entry in the VerdictBreakdown audit log.
 
     Produced by aggregate_results() for EVERY agent, whether it succeeded or not.
-    Stored in PRReviewState["verdict_breakdown"] for Phase 17 trace viewer.
+    Stored in PRReviewState["verdict_breakdown"] for audit logging and trace viewing.
 
     WIKI: Confidence-Weighted-Voting.md
       "When agents disagree, you need explicit rules. Don't hide conflicts;
@@ -361,13 +351,13 @@ class AggregationResult:
     verdict_breakdown: list[VerdictRecord]
 
     # True if agents disagree (some APPROVE, some REQUEST_CHANGES or CRITICAL_BLOCK).
-    # Surfaced in the Phase 17 trace viewer as a "conflict detected" badge.
+    # Surfaced in trace view as a "conflict detected" badge.
     # Does NOT automatically trigger HITL — disagreement is normal and expected.
     # The arbitration rules (Safety-Threshold etc.) decide the final verdict.
     conflict_detected: bool
 
     # True if < 4 agents returned results (some timed out or failed).
-    # Stored so Phase 17 can show "partial review" warnings.
+    # Stored so audit logs and trace view can show "partial review" warnings.
     is_partial: bool
 
     # Human-readable reason if NEEDS_HUMAN_REVIEW was triggered.

@@ -132,7 +132,7 @@ class AgentResult(BaseModel):
     duration_seconds: float
 
     # Total LLM tokens used by this agent for this PR.
-    # Used for cost attribution (Phase 16).
+    # Used for cost attribution.
     tokens_used: int = 0
 
     # Whether this agent completed successfully.
@@ -198,7 +198,7 @@ class PRReview(BaseModel):
     # Sum of AgentResult.tokens_used for all agents
     total_tokens_used: int = 0
 
-    # Estimated cost of this review in USD (calculated in Phase 16)
+    # Estimated cost of this review in USD
     estimated_cost_usd: float = 0.0
 
     # When the review was created (webhook received)

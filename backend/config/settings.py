@@ -170,11 +170,7 @@ class Settings(BaseSettings):
     #
     # In development (app_env="development"): not checked (auth is bypassed).
     # In production: callers must send X-API-Key: <this value> on every request.
-    #
-    # PHASE 11 REPLACEMENT:
-    # When Phase 11 adds JWT authentication, this field becomes the fallback
-    # for service-to-service calls (e.g. the ARQ worker polling its own API).
-    # Human users will use JWT Bearer tokens instead.
+    # Also used for service-to-service calls (e.g. the ARQ worker).
     #
     # DEFAULT: empty string.
     # An empty api_key in production causes require_auth() to return HTTP 500
@@ -182,10 +178,10 @@ class Settings(BaseSettings):
     api_key: str = Field(default="", description="API key for the REST API. Required in production.")
 
     # -------------------------------------------------------------------------
-    # Phase 16 — Economics & Cost Control
+    # Economics & Cost Control
     # Budget caps for LLM spend. Daily cap is the hard guardrail enforced by
     # backend.economics.budget.BudgetGuard. Per-review cap is advisory and
-    # surfaced via the economics summary endpoint (informs Phase 20 routing).
+    # surfaced via the economics summary endpoint.
     # (Wiki LLMOps-Essentials.md, "Cost Control":
     #  "Without cost tracking, a busy agent can run up a $10,000 bill in a day.
     #   This happens. Budget limits are not optional.")

@@ -69,7 +69,7 @@ class AgentResultState(TypedDict):
     error_message: str
 
     # How long this agent took in seconds.
-    # Used for cost attribution and latency tracking (Phase 10).
+    # Used for cost attribution and latency tracking.
     duration_seconds: float
 
     # The findings this agent produced.
@@ -83,7 +83,7 @@ class AgentResultState(TypedDict):
     # If below settings.confidence_threshold -> goes to HITL queue.
     confidence: float
 
-    # Phase 8: per-agent verdict derived from findings (AgentVerdict enum value as string).
+    # Per-agent verdict derived from findings (AgentVerdict enum value as string).
     # Values: "approve", "request_changes", "critical_block"
     # Stored as string (not enum) to keep state.py dependency-free.
     # The aggregator reads this to apply the Safety-Threshold Rule.
@@ -213,15 +213,15 @@ class PRReviewState(TypedDict):
     human_review_reason: str
 
     # -------------------------------------------------------------------------
-    # Phase 8: Arbitration audit fields (written by aggregate_results)
+    # Arbitration audit fields (written by aggregate_results)
     # -------------------------------------------------------------------------
 
-    # Per-agent verdict breakdown for audit log / Phase 17 trace viewer.
+    # Per-agent verdict breakdown for audit log and trace viewer.
     # Each entry is a VerdictRecord.to_dict() result:
     #   {"agent_type": str, "succeeded": bool, "verdict": str,
     #    "confidence": float, "finding_count": int, "error_message": str}
     # WRITTEN BY: aggregate_results
-    # READ BY: Phase 17 trace viewer, Phase 15 audit log
+    # READ BY: trace viewer, audit log
     # WIKI: Confidence-Weighted-Voting.md — "Hidden-Conflict anti-pattern:
     #   silently resolving agent disagreements. Fix: emit full breakdown."
     verdict_breakdown: list[dict[str, Any]]
@@ -230,7 +230,7 @@ class PRReviewState(TypedDict):
     # Does NOT automatically trigger HITL — disagreement is normal.
     # The Safety-Threshold Rule handles actual escalation decisions.
     # WRITTEN BY: aggregate_results
-    # READ BY: Phase 17 trace viewer (shows "conflict detected" badge)
+    # READ BY: trace viewer (shows "conflict detected" badge)
     conflict_detected: bool
 
     # True if < 4 agents returned results (some timed out or failed).
@@ -251,7 +251,7 @@ class PRReviewState(TypedDict):
     # The GitHub review ID returned by the GitHub API after posting.
     # None if review was not posted (went to HITL queue or failed).
     # WRITTEN BY: post_review
-    # Used for: dispute resolution (Phase 19 can reference this ID)
+    # Used for: dispute resolution
     github_review_id: int | None
 
     # -------------------------------------------------------------------------
@@ -271,7 +271,7 @@ class PRReviewState(TypedDict):
     confidence_threshold: float
 
     # -------------------------------------------------------------------------
-    # RAG Context (added Phase 6 — Memory Architecture)
+    # RAG Context (Memory Architecture)
     # -------------------------------------------------------------------------
 
     # RAG-retrieved prior code context for this PR's diff.
@@ -283,7 +283,7 @@ class PRReviewState(TypedDict):
     # no similar code found, embedding failed), this field stays "".
     # Agents check: if retrieved_context: (append to prompt) else: (run without it).
     #
-    # WRITTEN BY: build_context node (Phase 6 addition)
+    # WRITTEN BY: build_context node
     # READ BY: fan_out_agents node -> passed to each agent's analyze() call
     #
     # CRITICAL CONSTRAINT (from RAG-Architecture.md + Production-Hardening.md wiki):
@@ -293,7 +293,7 @@ class PRReviewState(TypedDict):
     retrieved_context: str
 
     # -------------------------------------------------------------------------
-    # Input Security Gate (Phase 11 — Threat Model)
+    # Input Security Gate (Threat Model)
     # -------------------------------------------------------------------------
     # Structured threat assessment result (scores, recommended_action, overall_severity).
     # WRITTEN BY: build_context node

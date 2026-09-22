@@ -8,20 +8,16 @@
 # This file is the answer: "here is HOW LangGraph does it."
 #
 # THE DEPENDENCY INVERSION PRINCIPLE IN ACTION:
-# The job queue (Phase 4), webhook router (Phase 3), and HITL system (Phase 19)
+# The job queue, webhook router, and HITL system
 # all import WorkflowEngine from backend.core — the abstract interface.
 # They do NOT import LangGraphEngine directly.
-# This file is only referenced in one place: backend/main.py at startup,
+# This file is referenced in backend/main.py at startup,
 # where we wire the concrete engine into the app.
-# If we ever swap to Temporal: write TemporalEngine, change one line in main.py.
-# Nothing else changes.
 #
 # RELATIONSHIP TO graph.py:
 # graph.py assembles the nodes into a StateGraph and compiles it.
 # This file uses that compiled graph to run reviews.
 # graph.py knows about nodes. This file knows about WorkflowEngine contracts.
-# They are separate because: graph structure changes (Phase 4-8) vs
-# engine interface (stable from Phase 3 onwards).
 
 import logging
 from datetime import datetime, timezone

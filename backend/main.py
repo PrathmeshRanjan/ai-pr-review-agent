@@ -45,13 +45,13 @@ from backend.database.postgres import init_db, init_vector_schema
 from backend.memory.redis_client import redis_client
 from backend.webhook_receiver.router import router as webhook_router
 
-# Phase 3 REST API routers
+# REST API routers
 from backend.api.reviews import router as reviews_router
 from backend.api.queue import router as queue_router
-from backend.api.hitl_router import hitl_router       # Phase 19: HITL queue + dispute
-from backend.api.economics_router import economics_router  # Phase 16: cost & budget
+from backend.api.hitl_router import hitl_router
+from backend.api.economics_router import economics_router
 
-# Phase 12 circuit breaker registry — surfaced in /health
+# Circuit breaker registry — surfaced in /health
 from backend.reliability.circuit_breaker import list_breaker_summaries
 
 # -------------------------------------------------------------------------
@@ -111,9 +111,7 @@ async def lifespan(app: FastAPI):
     # connect() creates the connection pool and pings Redis to confirm it's up.
     #
     # WHY try/except here (not fail-fast):
-    #   On Railway, the container must answer /health/live before env vars are
-    #   fully propagated or Upstash accepts the first connection. If Redis is
-    #   temporarily unreachable at cold boot, we log a warning and continue.
+    #   If Redis is temporarily unreachable at cold boot, we log a warning and continue.
     #   Job submissions will fail gracefully (circuit breaker) until Redis is up.
     #   This is safer than crashing the container and retrying from scratch.
     try:
@@ -122,19 +120,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logger.warning("Redis unavailable at startup — job queue degraded: %s", exc)
 
-    # Phase 6: Postgres — create tables via ORM
+    # Postgres — create tables via ORM
     #
     # init_db() runs create_all() on the async SQLAlchemy engine.
     # In production this creates tables if they don't exist (safe to call on restart).
     #
     # WHY try/except here (not fail-fast):
-    #   Neon serverless Postgres has a ~30s cold start after idle.
-    #   On Railway's first boot both the container AND Neon may be waking up
-    #   simultaneously. Crashing startup forces a full container restart which
-    #   hits Neon again before it's ready — a retry death spiral.
+    #   On first boot the database container may still be waking up.
+    #   Crashing startup forces a full container restart.
     #   Instead we log a warning and let the /health endpoint surface the error.
     #   The first real request that needs Postgres will retry via SQLAlchemy pool.
-    # TODO: Replace with Alembic migrations before v1.0.
     try:
         await init_db()
         logger.info("Postgres tables verified/created.")
@@ -209,7 +204,7 @@ if settings.is_development:
 else:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["https://your-dashboard-domain.com"],  # TODO: Phase 13 sets this
+        allow_origins=["https://your-dashboard-domain.com"],
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
@@ -220,23 +215,19 @@ else:
 # Register Routers
 #
 # Each router owns a group of related endpoints.
-# Add routers here as modules are built.
 # -------------------------------------------------------------------------
 
 app.include_router(webhook_router)        # POST /webhook/github
 
-# Phase 3 REST API routers
+# REST API routers
 app.include_router(reviews_router)        # GET /api/v1/reviews, GET /api/v1/reviews/{id}
 app.include_router(queue_router)          # GET /api/v1/queue
-app.include_router(hitl_router)           # Phase 19: GET /api/v1/hitl/queue, POST /api/v1/hitl/{id}/decision
-app.include_router(economics_router)      # Phase 16: GET /api/v1/economics/{summary,budget,timeseries,workflow/...}
-
-# TODO: add as phases progress
-# app.include_router(auth_router)         # POST /api/v1/auth/login, GET /api/v1/auth/me (Phase 11)
+app.include_router(hitl_router)           # GET /api/v1/hitl/queue, POST /api/v1/hitl/{id}/decision
+app.include_router(economics_router)      # GET /api/v1/economics/{summary,budget,timeseries,workflow/...}
 
 
 # -------------------------------------------------------------------------
-# Health Check — deep (Phase 13)
+# Health Checks
 #
 # TWO LEVELS of health endpoints:
 #

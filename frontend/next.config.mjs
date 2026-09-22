@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "https://web-production-d9e54.up.railway.app";
+  "http://localhost:8000";
 
 const nextConfig = {
   reactStrictMode: true,

@@ -27,11 +27,10 @@ WHY contextvars NOT thread-local?
   opensre's prototype used a plain dict (_local_storage) -- fine for sync CLI,
   wrong for async HTTP servers.  Wiki: "Build observability first."
 
-OTel INTEGRATION (Phase 13)
+OTel INTEGRATION
   The OTel SDK is imported lazily inside _try_otel_export() so the module
   loads cleanly in tests with no running collector.  When settings.otel_endpoint
   is set, spans are forwarded to a Jaeger/Grafana Tempo OTLP endpoint.
-  This matches our Phase 6 pattern: RAG is an enhancement, never a hard dep.
 
 COST ATTRIBUTION
   Wiki: "Attach cost_usd and token counts as span tags on every LLM call" to
@@ -229,7 +228,7 @@ class TraceContext:
         """Export the full trace as a JSON-safe dict.
 
         Shape matches the OTel Span export format closely enough that
-        Phase 13's OTLP exporter can convert it with minimal mapping.
+        an OTLP exporter can convert it with minimal mapping.
         """
         root_span = self.spans[0] if self.spans else None
         total_ms = None

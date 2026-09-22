@@ -2,12 +2,7 @@
 
 DESIGN OVERVIEW
   AlertManager evaluates a MetricSnapshot (a simple dataclass) against a list
-  of AlertRules and returns which rules fired.  No external Prometheus/Grafana
-  dependency in Phase 10 -- metrics are passed in by the caller.
-
-  Phase 13 (Infrastructure) will wire a Prometheus /metrics endpoint that
-  populates MetricSnapshots from real counters.  Phase 10's AlertManager is
-  the evaluation engine; the metric collection plumbing is Phase 13's job.
+  of AlertRules and returns which rules fired. Metrics are passed in by the caller.
 
 ALERT TIERS (from wiki Observability chapter)
   PAGE    -- immediate pager; system is down or severely degraded
@@ -22,11 +17,9 @@ DEFAULT RULES (from wiki concrete examples)
   WARNING hitl_rate > 0.30             (>30% reviews escalated to HITL)
   INFO    avg_cost_per_review > 0.10   ($0.10 per review -- cost drift)
 
-WHY NOT PROMETHEUS ALERTING RULES?
-  Those live in a .yaml file and require a running Prometheus + Alertmanager.
-  We want alerting logic testable in CI with no infrastructure.  AlertManager
-  here is the in-process evaluation layer.  The Phase 13 Prometheus exporter
-  will expose the same metrics so external tools can consume them too.
+WHY IN-PROCESS EVALUATION?
+  We want alerting logic testable in CI with no infrastructure. AlertManager
+  here is the in-process evaluation layer.
 """
 
 from __future__ import annotations
@@ -110,8 +103,7 @@ class MetricSnapshot:
     """Point-in-time metrics for one review or a rolling window.
 
     All fields have sensible defaults so partial snapshots are valid.
-    Phase 13 will populate these from Prometheus counters + histograms.
-    For now, the orchestrator builds a MetricSnapshot after each review
+    The orchestrator builds a MetricSnapshot after each review
     from TraceContext totals and workflow state.
 
     Field names map 1:1 to Prometheus metric names (with dots -> underscores):

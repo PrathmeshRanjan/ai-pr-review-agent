@@ -20,8 +20,8 @@
 # The webhook_receiver/ package is a separate adapter (inbound events).
 # This api/ package is the query/read adapter (dashboard, HITL UI, integrations).
 #
-# As phases complete, new routers are added here:
-#   reviews.py  — GET /api/v1/reviews, GET /api/v1/reviews/{id}     (Phase 3)
-#   queue.py    — GET /api/v1/queue                                  (Phase 3)
-#   hitl.py     — POST /api/v1/queue/{id}/approve, /reject           (Phase 19)
-#   auth.py     — POST /api/v1/auth/login, GET /api/v1/auth/me       (Phase 11)
+# Routers:
+#   reviews.py      — GET /api/v1/reviews, GET /api/v1/reviews/{id}
+#   queue.py        — GET /api/v1/queue
+#   hitl_router.py  — GET /api/v1/hitl/queue, POST /api/v1/hitl/{id}/decision
+#   economics_router.py — GET /api/v1/economics/*

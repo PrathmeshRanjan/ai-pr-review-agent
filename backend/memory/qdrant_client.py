@@ -330,11 +330,8 @@ async def search_similar_code(
 
         # Step 2: Vector similarity search with the metadata filter.
         #
-        # FIX (Phase 14): AsyncQdrantClient >= 1.7 renamed .search() to
-        # .query_points(). The old .search() raises AttributeError at runtime.
+        # AsyncQdrantClient >= 1.7 uses .query_points().
         # .query_points() returns a QueryResponse with a .points list of ScoredPoint.
-        # (This was the "AsyncQdrantClient has no attribute 'search'" error
-        #  seen in worker logs after Phase 13 demo.)
         response = await client.query_points(
             collection_name=COLLECTION_NAME,
             query=query_vector,

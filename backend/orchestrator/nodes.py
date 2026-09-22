@@ -293,7 +293,6 @@ async def build_context(state: PRReviewState) -> dict[str, Any]:
 
 # Per-agent timeout in seconds.
 # Agents doing LLM calls need time, but we cannot wait forever.
-# These are conservative values — tuned in Phase 16 (cost/economics).
 _AGENT_TIMEOUTS = {
     "security": 60,   # security agent runs multiple checks, needs more time
     "quality":  45,
@@ -556,7 +555,7 @@ async def aggregate_results(state: PRReviewState) -> dict[str, Any]:
     #
     # conflict_detected: at least one APPROVE and at least one REQUEST_CHANGES+.
     #   This is normal and expected — domain experts often disagree.
-    #   Does NOT trigger HITL by itself. Logged as a badge in Phase 17.
+    #   Does NOT trigger HITL by itself. Logged for observability.
     #
     # partial_review: < 4 agents returned successfully.
     #   WIKI: Fan-Out-Fan-In.md / Partial-Results-Doctrine:
@@ -787,9 +786,8 @@ async def post_review(state: PRReviewState) -> dict[str, Any]:
             state["workflow_id"],
         )
 
-        # Phase 19: Enqueue to HITL queue (Postgres + Redis).
-        # This replaces the TODO stub. The review is persisted BEFORE this
-        # function returns so the operator has a durable record.
+        # Enqueue to HITL queue (Postgres + Redis).
+        # The review is persisted BEFORE this function returns so the operator has a durable record.
         #
         # DEPENDENCY IMPORT NOTE:
         # We import here (not at module top) to avoid circular imports.
@@ -934,14 +932,13 @@ async def post_review(state: PRReviewState) -> dict[str, Any]:
     #   diff hunk for that file. The LLM returns line numbers from the full file
     #   (e.g. line 30 of payment.py) but if that line isn't in the diff GitHub
     #   returns 422 Unprocessable Entity and the ENTIRE review is rejected —
-    #   including the summary body. Stripping inline comments means the review
-    #   always posts successfully. Proper diff-position mapping (parsing the
-    #   unified diff to find hunk positions) will be added in Phase 17.
+    #   including the summary body. Stripping inline comments ensures the review
+    #   always posts successfully with full findings summarized in the body.
     payload = PostReviewPayload(
         commit_id=state["head_commit_sha"],
         body=body,
         event=event,
-        comments=[],  # inline comments deferred to Phase 17 (diff position mapping)
+        comments=[],
     )
 
     # -------------------------------------------------------------------------
@@ -1121,8 +1118,7 @@ async def post_review(state: PRReviewState) -> dict[str, Any]:
     #   "A fault is one component deviating from spec."
     #   -> Postgres failing after a successful GitHub post is a fault in
     #      the Postgres component. The GitHub component succeeded.
-    #      Do not undo the GitHub post. The DB record can be re-created
-    #      from the GitHub audit log (Phase 19).
+    #      Do not undo the GitHub post.
     # -------------------------------------------------------------------------
     try:
         from backend.database.postgres import get_engine
@@ -1248,7 +1244,7 @@ def _verdict_to_review_event(verdict: ReviewVerdict | None) -> ReviewEvent:
         # WHY COMMENT not REQUEST_CHANGES:
         #   GitHub rejects REQUEST_CHANGES when the reviewer is the same user
         #   who opened the PR (HTTP 422: "Can not request changes on your own
-        #   pull request"). In production with a dedicated bot account (Phase 16)
+        #   pull request"). With a separate dedicated bot account
         #   this would be REQUEST_CHANGES. For now COMMENT carries the same full
         #   verdict body + all findings and is always accepted by the API.
         return ReviewEvent.COMMENT
@@ -1398,11 +1394,8 @@ def _build_review_summary(
     agent_section = "\n".join(agent_lines) if agent_lines else "  - No agent data available."
 
     # ── All findings grouped by file ─────────────────────────────────────────
-    # WHY grouped by file not by agent:
-    #   Inline comments are deferred to Phase 17 (diff position mapping).
-    #   Until then ALL findings live in the review body. Grouping by file
-    #   lets the developer jump straight to the relevant file for each issue.
-    #   Findings without a file_path are listed under "General" at the top.
+    # Grouping by file lets the developer jump straight to the relevant file for each issue.
+    # Findings without a file_path are listed under "General" at the top.
     from collections import defaultdict
     by_file: dict[str, list] = defaultdict(list)
     for f in findings:
@@ -1533,15 +1526,11 @@ async def _call_agent_real(
     # Instantiate fresh agent for each review (no shared state between reviews)
     agent = AgentClass()
 
-    # Phase 8: Build the typed AgentTask input contract.
-    # WHY AgentTask AND NOT raw positional args?
-    #   WIKI: WorkTask-Contract.md — "A typed input contract makes each agent's
-    #   requirements explicit, testable, and self-documenting."
-    #   AgentTask is frozen (immutable), so agents cannot mutate their input.
+    # Build the typed AgentTask input contract.
+    # AgentTask is frozen (immutable), so agents cannot mutate their input.
     #
     # changed_files: stored as list in state, converted to tuple for frozen dataclass.
-    # peer_context:  currently empty tuple (parallel fan-out — no prior agent results).
-    #               Will be populated in Phase 20 sequential reflection pass.
+    # peer_context:  empty tuple for parallel fan-out (no prior agent results).
     task = AgentTask(
         diff=state.get("pr_diff", ""),
         pr_title=state.get("pr_title", ""),
@@ -1549,15 +1538,14 @@ async def _call_agent_real(
         repo_name=state.get("repo_full_name", ""),
         retrieved_context=state.get("retrieved_context", ""),
         changed_files=tuple(state.get("changed_files", [])),
-        peer_context=(),  # Phase 20: will pass summaries from prior agents here
-        workflow_id=state.get("workflow_id"),  # Phase 16: cost attribution
+        peer_context=(),
+        workflow_id=state.get("workflow_id"),
     )
 
-    # Call analyze() with the new typed contract (task= kwarg).
-    # The old positional-args signature is still supported for backward compatibility.
+    # Call analyze() with typed contract (task= kwarg).
     agent_output = await agent.analyze(task=task)
 
-    # Extract per_verdict from AgentOutput (Phase 8 field).
+    # Extract per_verdict from AgentOutput.
     # .value converts AgentVerdict enum -> plain string for state storage.
     per_verdict_str = agent_output.per_verdict.value
 

@@ -1,12 +1,12 @@
 # backend/hitl/__init__.py
 #
-# Human-in-the-Loop (HITL) subsystem — Phase 19.
+# Human-in-the-Loop (HITL) subsystem.
 #
 # SUBSYSTEM STRUCTURE:
 #   queue.py      — enqueue/dequeue HITL items (Redis list + Postgres persist)
 #   escalation.py — policy rules: when to escalate a review
 #   dispute.py    — Use Case: human override logic (approve/reject/edit)
-#   feedback.py   — Use Case: persist human decision as Phase 20 training signal
+#   feedback.py   — Use Case: persist human decision as feedback signal
 #
 # LAYER CONTRACT (Clean-Architecture.md wiki — Business-Rules):
 #   This package is a USE CASE layer.

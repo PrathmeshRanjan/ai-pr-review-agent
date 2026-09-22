@@ -1,17 +1,16 @@
 # backend/hitl/queue.py
 #
-# HITL Queue — Phase 19.
+# HITL Queue.
 #
 # RESPONSIBILITY:
 #   Enqueue escalated reviews into the HITL queue and dequeue them for
 #   human processing.
 #
 # STORAGE DESIGN (Polyglot-Persistence.md + Derived-Data-Systems.md wiki):
-#
-#   Postgres (system of record):
-#     HITLReview row is written FIRST, before Redis.
-#     Status: "pending" until human acts.
-#     If Redis is lost, the queue can be rebuilt from:
+#   Postgres (source of truth, durable):
+#     Table: hitl_reviews
+#     Written first. If Redis fails, Postgres has the record.
+#     Recoverable at any time:
 #       SELECT * FROM hitl_reviews WHERE status = 'pending'
 #
 #   Redis (derived, ephemeral):
@@ -21,8 +20,7 @@
 #     Purpose: fast O(1) enqueue/dequeue without polling Postgres.
 #
 #   WHY BOTH? (Stability-Patterns.md wiki — "View other systems with suspicion"):
-#     Redis free tier can be lost (Upstash eviction, Railway Redis failures).
-#     Postgres is the durable safety net.
+#     Redis can restart or evict keys; Postgres is the durable safety net.
 #     Redis is the fast operational path.
 #     They stay in sync via the enqueue/dequeue contract:
 #       enqueue: Postgres first, Redis second.

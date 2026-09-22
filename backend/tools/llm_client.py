@@ -59,7 +59,7 @@ class MistralRateLimitError(AgentError):
 
 
 # ---------------------------------------------------------------------------
-# Phase 16 — fire-and-forget cost log writer.
+# Fire-and-forget cost log writer.
 #
 # Called after each successful LLM call. Reads the active workflow context
 # (set by base_agent.analyze) so we never have to thread a workflow_id arg
